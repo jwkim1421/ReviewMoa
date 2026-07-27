@@ -180,7 +180,7 @@ function Home({
       <section className="hero">
         <div className="eyebrow"><Sparkles size={15} /> 구매 전에, 리뷰부터 제대로</div>
         <h1>리뷰는 많아도,<br /><em>판단은 쉬워야 합니다.</em></h1>
-        <p className="lead">상품 주소를 입력하면{"\n"}→ 별점별 최신 리뷰를 확인하고{"\n"}→ 의심 리뷰는 덜어낸 뒤{"\n"}핵심만 정리해드려요.</p>
+        <p className="lead">상품 주소 하나면 충분해요.{"\n"}별점별 최신 리뷰를 고르게 살피고,{"\n"}의심 신호는 덜어내 핵심만 보여드려요.</p>
         <form className={`search-box ${error ? "has-error" : ""}`} onSubmit={onSubmit}>
           <Search size={21} aria-hidden="true" />
           <input
