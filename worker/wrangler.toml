@@ -1,0 +1,13 @@
+name = "reviewmoa-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-27"
+
+[vars]
+ALLOWED_ORIGIN = "https://reviewmoa.kro.kr"
+AI_MODEL = "gpt-5-mini"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "reviewmoa"
+database_id = "REPLACE_WITH_CLOUDFLARE_D1_DATABASE_ID"
+migrations_dir = "migrations"

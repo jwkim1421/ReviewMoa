@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "리뷰모아 수집 도우미",
+  "version": "0.1.0",
+  "description": "사용자가 연 상품 페이지에서 공개된 최신 리뷰를 별점별로 확인합니다.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://*.naver.com/*",
+    "https://*.coupang.com/*",
+    "https://*.kurly.com/*",
+    "https://*.ohou.se/*",
+    "https://*.11st.co.kr/*",
+    "https://*.ssg.com/*",
+    "https://*.gmarket.co.kr/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "리뷰모아"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "https://reviewmoa.kro.kr/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.naver.com/*",
+        "https://*.coupang.com/*",
+        "https://*.kurly.com/*",
+        "https://*.ohou.se/*",
+        "https://*.11st.co.kr/*",
+        "https://*.ssg.com/*",
+        "https://*.gmarket.co.kr/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
