@@ -29,6 +29,8 @@ jobs:
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
