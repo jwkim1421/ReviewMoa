@@ -48,6 +48,19 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
     : topStrength
       ? `${topStrength} 만족이 반복되지만 리뷰 수와 별점별 차이를 함께 확인하세요.`
       : "아직 충분한 정상 리뷰가 모이지 않아 원문을 먼저 확인하는 편이 안전해요.";
+  const analysis = {
+    positive: topStrength
+      ? `${topStrength}에 대한 만족이 반복적으로 확인됐어요.`
+      : "뚜렷하게 반복되는 좋은 점은 아직 확인되지 않았어요.",
+    negative: topCaution
+      ? `${topCaution}에 대한 불만이 있어 구매 전에 확인이 필요해요.`
+      : "반복적으로 나타나는 큰 불만은 아직 확인되지 않았어요.",
+    conclusion: topStrength && topCaution
+      ? `${topStrength}을 중요하게 본다면 적합하지만 ${topCaution}이 걱정된다면 비교 후 선택하세요.`
+      : topStrength
+        ? `${topStrength}을 중요하게 보는 구매자에게 무난한 선택이에요.`
+        : "표본이 충분하지 않아 대표 원문을 먼저 확인하는 편이 안전해요.",
+  };
 
   const anomalyCounts = {
     sponsored: rows.filter((review) => review.classification === "sponsored").length,
@@ -64,6 +77,7 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
     rawExpiresAt,
     reportExpiresAt,
     verdict,
+    analysis,
     confidence: confidence(included, excluded),
     confidenceReasons: [
       `별점별 정상 리뷰 ${included.length}개 반영`,
@@ -83,7 +97,7 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
         summary: accepted.length
           ? `${rating}점 최신 정상 리뷰 ${accepted.length}개에서 반복 의견을 확인했습니다.`
           : `최근 ${rating}점 리뷰가 확인되지 않았습니다.`,
-        reviews: accepted.slice(0, 5).map((review) => ({
+        reviews: accepted.slice(0, 10).map((review) => ({
           id: review.review_id,
           rating,
           content: review.content,
@@ -118,19 +132,23 @@ export async function enhanceVerdictWithAi<T extends Record<string, unknown>>(
       input: [
         {
           role: "system",
-          content: "한국어 상품 리뷰만 근거로 60자 안팎의 신중한 구매 결론을 작성한다. 근거 없는 사실을 만들지 않는다.",
+          content: "한국어 상품 리뷰만 근거로 좋은 점, 나쁜 점, 최종 결론을 각각 한 문장으로 작성한다. 근거 없는 사실을 만들지 않는다.",
         },
         { role: "user", content: JSON.stringify(input) },
       ],
       text: {
         format: {
           type: "json_schema",
-          name: "review_verdict",
+          name: "review_analysis",
           strict: true,
           schema: {
             type: "object",
-            properties: { verdict: { type: "string" } },
-            required: ["verdict"],
+            properties: {
+              positive: { type: "string" },
+              negative: { type: "string" },
+              conclusion: { type: "string" }
+            },
+            required: ["positive", "negative", "conclusion"],
             additionalProperties: false,
           },
         },
@@ -140,8 +158,14 @@ export async function enhanceVerdictWithAi<T extends Record<string, unknown>>(
   if (!response.ok) return report;
   const payload = await response.json() as { output_text?: string };
   try {
-    const parsed = JSON.parse(payload.output_text ?? "{}") as { verdict?: string };
-    return parsed.verdict ? { ...report, verdict: parsed.verdict } as T : report;
+    const parsed = JSON.parse(payload.output_text ?? "{}") as {
+      positive?: string;
+      negative?: string;
+      conclusion?: string;
+    };
+    return parsed.positive && parsed.negative && parsed.conclusion
+      ? { ...report, verdict: parsed.conclusion, analysis: parsed } as T
+      : report;
   } catch {
     return report;
   }

@@ -6,7 +6,10 @@ import {
   ChevronDown,
   Clock3,
   ExternalLink,
+  Github,
+  Lightbulb,
   LoaderCircle,
+  MessageSquarePlus,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -21,7 +24,7 @@ import { createLocalReport } from "./domain/analyze";
 import { collectWithExtension, hasCollectorExtension } from "./lib/extension";
 
 const sources = ["네이버", "쿠팡", "컬리", "오늘의집", "11번가", "SSG닷컴", "G마켓"];
-type View = "home" | "probing" | "report";
+type View = "home" | "probing" | "report" | "ideas";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -35,7 +38,7 @@ function formatDate(value: string) {
 
 export function App() {
   const [url, setUrl] = useState("");
-  const [view, setView] = useState<View>("home");
+  const [view, setView] = useState<View>(() => window.location.hash === "#ideas" ? "ideas" : "home");
   const [product, setProduct] = useState<ProductIdentity>();
   const [capability, setCapability] = useState<ReviewCapability>();
   const [report, setReport] = useState<Report>();
@@ -111,30 +114,52 @@ export function App() {
   }
 
   function reset() {
+    if (window.location.hash) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
     setView("home");
     setReport(undefined);
     setCapability(undefined);
     setError("");
   }
 
+  function showIdeas() {
+    window.location.hash = "ideas";
+    setView("ideas");
+  }
+
   return (
     <main>
-      <Nav onHome={reset} />
+      <Nav onHome={reset} onIdeas={showIdeas} ideasActive={view === "ideas"} />
       {view === "home" && <Home url={url} setUrl={setUrl} onSubmit={submit} error={error} />}
       {view === "probing" && product && <Probe product={product} step={probeStep} capability={capability} />}
       {view === "report" && report && <ReportView report={report} onRefresh={refresh} onBack={reset} />}
+      {view === "ideas" && <IdeasPage onBack={reset} />}
     </main>
   );
 }
 
-function Nav({ onHome }: { onHome: () => void }) {
+function Nav({
+  onHome,
+  onIdeas,
+  ideasActive,
+}: {
+  onHome: () => void;
+  onIdeas: () => void;
+  ideasActive: boolean;
+}) {
   return (
     <nav className="nav">
       <button className="brand brand-button" onClick={onHome} aria-label="리뷰모아 홈">
         <span className="brand-mark"><Star size={18} fill="currentColor" /></span>
         리뷰모아
       </button>
-      <span className="beta">PRIVATE BETA</span>
+      <div className="nav-actions">
+        <button className={`idea-nav ${ideasActive ? "active" : ""}`} onClick={onIdeas}>
+          <Lightbulb size={15} /> 아이디어 기여
+        </button>
+        <span className="beta">PRIVATE BETA</span>
+      </div>
     </nav>
   );
 }
@@ -154,8 +179,8 @@ function Home({
     <>
       <section className="hero">
         <div className="eyebrow"><Sparkles size={15} /> 구매 전에, 리뷰부터 제대로</div>
-        <h1>흩어진 리뷰를 모아<br /><em>살 이유와 말아야 할 이유</em>를 찾습니다.</h1>
-        <p className="lead">상품 주소 하나면 별점별 최신 리뷰를 확인하고, 의심 리뷰는 덜어낸 뒤 구매 판단에 필요한 핵심만 정리해 드려요.</p>
+        <h1>리뷰는 많아도,<br /><em>판단은 쉬워야 합니다.</em></h1>
+        <p className="lead">상품 주소를 입력하면{"\n"}→ 별점별 최신 리뷰를 확인하고{"\n"}→ 의심 리뷰는 덜어낸 뒤{"\n"}핵심만 정리해드려요.</p>
         <form className={`search-box ${error ? "has-error" : ""}`} onSubmit={onSubmit}>
           <Search size={21} aria-hidden="true" />
           <input
@@ -175,16 +200,115 @@ function Home({
         <div>{sources.map((source) => <span key={source}><Check size={13} /> {source}</span>)}</div>
       </section>
       <section className="features">
-        <Feature number="01" title="별점마다 공평하게">1점부터 5점까지 최근 정상 리뷰를 최대 100개씩 살펴봅니다.</Feature>
+        <Feature number="01" title="별점마다 공평하게">최소 별점에서 최대 별점까지{"\n"}최근 리뷰를 최대 100개씩 살펴봅니다.</Feature>
         <Feature number="02" title="의심 신호는 따로">협찬 표시, 중복 문장, 별점과 본문의 불일치를 분석에서 분리합니다.</Feature>
-        <Feature number="03" title="근거가 보이는 결론">한 줄 결론과 신뢰도, 별점별 대표 원문까지 함께 확인합니다.</Feature>
+        <Feature number="03" title="근거가 보이는 결론">한 줄 결론과 신뢰도, 별점별 대표 원문까지{"\n"}함께 확인합니다.</Feature>
       </section>
     </>
   );
 }
 
-function Feature({ number, title, children }: { number: string; title: string; children: string }) {
+function Feature({ number, title, children }: { number: string; title: string; children: React.ReactNode }) {
   return <article><span className="number">{number}</span><h2>{title}</h2><p>{children}</p></article>;
+}
+
+function IdeasPage({ onBack }: { onBack: () => void }) {
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("새 기능");
+  const [details, setDetails] = useState("");
+
+  function submitIdea(event: FormEvent) {
+    event.preventDefault();
+    const issueTitle = `[${category}] ${title.trim()}`;
+    const issueBody = [
+      "## 제안 내용",
+      details.trim(),
+      "",
+      "## 기대하는 변화",
+      "<!-- 이 아이디어로 무엇이 더 좋아질지 적어주세요. -->",
+      "",
+      "---",
+      "리뷰모아 아이디어 기여 페이지에서 작성되었습니다.",
+    ].join("\n");
+    const issueUrl = new URL("https://github.com/jwkim1421/ReviewMoa/issues/new");
+    issueUrl.searchParams.set("title", issueTitle);
+    issueUrl.searchParams.set("body", issueBody);
+    window.open(issueUrl, "_blank", "noopener,noreferrer");
+  }
+
+  return (
+    <section className="ideas-page">
+      <button className="text-button" onClick={onBack}><ArrowLeft size={16} /> 홈으로 돌아가기</button>
+      <div className="ideas-intro">
+        <div>
+          <span className="ideas-kicker"><Lightbulb size={15} /> BUILD WITH US</span>
+          <h1>리뷰모아를 더 쓸모 있게<br /><em>함께 만들어 주세요.</em></h1>
+          <p>불편했던 점, 새로 필요한 기능, 더 정확한 분석 방법을 제안해 주세요. 공개 저장소에서 제안의 진행 과정도 함께 확인할 수 있습니다.</p>
+        </div>
+        <a className="issues-link" href="https://github.com/jwkim1421/ReviewMoa/issues" target="_blank" rel="noreferrer">
+          <Github size={18} /> 등록된 아이디어 보기 <ExternalLink size={14} />
+        </a>
+      </div>
+
+      <div className="ideas-layout">
+        <form className="idea-form" onSubmit={submitIdea}>
+          <div className="form-heading">
+            <MessageSquarePlus size={21} />
+            <div><h2>새 아이디어 기여하기</h2><p>작성 후 GitHub에서 내용을 한 번 더 확인하고 등록합니다.</p></div>
+          </div>
+          <label>
+            <span>분류</span>
+            <select value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option>새 기능</option>
+              <option>리뷰 수집</option>
+              <option>AI 분석</option>
+              <option>화면 개선</option>
+              <option>오류 제보</option>
+              <option>기타</option>
+            </select>
+          </label>
+          <label>
+            <span>아이디어 제목</span>
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="어떤 점이 더 좋아지면 좋을까요?"
+              required
+              maxLength={100}
+            />
+          </label>
+          <label>
+            <span>자세한 내용</span>
+            <textarea
+              value={details}
+              onChange={(event) => setDetails(event.target.value)}
+              placeholder="현재 불편한 점과 원하는 동작을 구체적으로 알려주세요."
+              required
+              rows={7}
+              maxLength={3000}
+            />
+          </label>
+          <button className="idea-submit" type="submit">
+            GitHub에서 기여 등록하기 <ArrowRight size={17} />
+          </button>
+          <p className="github-note"><Github size={13} /> 등록하려면 GitHub 로그인이 필요하며, 작성 내용은 공개됩니다.</p>
+        </form>
+
+        <aside className="contribution-guide">
+          <span className="section-label">좋은 제안의 기준</span>
+          <ol>
+            <li><strong>문제를 먼저 알려주세요.</strong><span>어떤 상황에서 무엇이 불편했는지 적어주세요.</span></li>
+            <li><strong>원하는 결과를 설명해 주세요.</strong><span>구현 방식보다 사용자가 얻게 될 변화를 알려주세요.</span></li>
+            <li><strong>예시가 있다면 더 좋아요.</strong><span>상품 URL이나 화면 예시를 개인정보 없이 첨부해 주세요.</span></li>
+          </ol>
+          <div className="contribution-promise">
+            <ShieldCheck size={18} />
+            <p><strong>모든 제안을 바로 구현한다고 약속할 수는 없지만,</strong> 검토 결과와 진행 상태는 공개 이슈에서 투명하게 남기겠습니다.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
 }
 
 function Probe({ product, step, capability }: { product: ProductIdentity; step: number; capability?: ReviewCapability }) {
@@ -215,6 +339,15 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
   const [openRating, setOpenRating] = useState<number | null>(null);
   const confidenceLabel = report.confidence >= 80 ? "높음" : report.confidence >= 60 ? "보통" : "낮음";
   const totalIncluded = useMemo(() => report.ratings.reduce((sum, item) => sum + item.included, 0), [report]);
+  const analysis = report.analysis ?? {
+    positive: report.strengths[0]
+      ? `${report.strengths[0].label}에 대한 만족이 반복적으로 확인됐어요.`
+      : "뚜렷하게 반복되는 좋은 점은 아직 확인되지 않았어요.",
+    negative: report.cautions[0]
+      ? `${report.cautions[0].label}에 대한 불만이 있어 구매 전에 확인이 필요해요.`
+      : "반복적으로 나타나는 큰 불만은 아직 확인되지 않았어요.",
+    conclusion: report.verdict,
+  };
 
   return (
     <div className="report-shell">
@@ -235,8 +368,12 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
 
       <section className="verdict-card">
         <div className="verdict-copy">
-          <span className="section-label">한 줄 구매 결론</span>
-          <h2>“{report.verdict}”</h2>
+          <span className="section-label">AI 분석 결과</span>
+          <div className="analysis-lines">
+            <p><strong>좋은 점</strong><span>{analysis.positive}</span></p>
+            <p><strong>아쉬운 점</strong><span>{analysis.negative}</span></p>
+            <p className="analysis-conclusion"><strong>결론</strong><span>{analysis.conclusion}</span></p>
+          </div>
           <p>정상 리뷰 {totalIncluded.toLocaleString()}개의 반복 의견을 바탕으로 정리했어요.</p>
         </div>
         <div className="confidence">
@@ -274,11 +411,11 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
               <button className="rating-summary" onClick={() => setOpenRating(openRating === item.rating ? null : item.rating)}>
                 <span className="rating-number">{item.rating}<Star size={16} fill="currentColor" /></span>
                 <span className="rating-copy"><strong>{item.included === 0 ? `${item.rating}점 리뷰 0개` : item.summary}</strong><small>검사 {item.checked}개 · 선정 {item.included}개 · 제외 {item.excluded}개</small></span>
-                <span className="review-toggle">5개 리뷰 보기 <ChevronDown className={openRating === item.rating ? "rotated" : ""} size={18} /></span>
+                <span className="review-toggle">10개 리뷰 보기 <ChevronDown className={openRating === item.rating ? "rotated" : ""} size={18} /></span>
               </button>
               {openRating === item.rating && (
                 <div className="review-panel">
-                  {item.reviews.length ? item.reviews.slice(0, 5).map((review, index) => (
+                  {item.reviews.length ? item.reviews.slice(0, 10).map((review, index) => (
                     <blockquote key={review.id}>
                       <header><span>구매자 {String(index + 1).padStart(2, "0")}</span><time>{review.createdAt ? formatDate(review.createdAt).split(" 오전")[0].split(" 오후")[0] : "작성일 미상"}</time></header>
                       <p>{review.content}</p>

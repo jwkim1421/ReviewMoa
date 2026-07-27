@@ -79,6 +79,11 @@ export interface Report {
   rawExpiresAt: string;
   reportExpiresAt: string;
   verdict: string;
+  analysis?: {
+    positive: string;
+    negative: string;
+    conclusion: string;
+  };
   confidence: number;
   confidenceReasons: string[];
   strengths: Array<{ label: string; mentions: number; ratio: number }>;

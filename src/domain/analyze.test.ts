@@ -33,7 +33,7 @@ describe("createLocalReport", () => {
     });
   });
 
-  it("keeps at most five representative originals", () => {
+  it("keeps at most ten representative originals", () => {
     const reviews = Array.from({ length: 12 }, (_, index): RawReview => ({
       id: String(index),
       rating: 4,
@@ -41,6 +41,6 @@ describe("createLocalReport", () => {
       classification: "included",
     }));
     const report = createLocalReport(product, reviews, "테스트 상품");
-    expect(report.ratings.find((item) => item.rating === 4)?.reviews).toHaveLength(5);
+    expect(report.ratings.find((item) => item.rating === 4)?.reviews).toHaveLength(10);
   });
 });

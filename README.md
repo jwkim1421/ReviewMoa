@@ -11,7 +11,7 @@
 - Chrome/Edge Manifest V3 수집 도우미
 - 화면에 공개된 리뷰의 별점·날짜·본문·옵션 추출
 - 광고성, 중복, 평점 불일치 의심 분류
-- 별점별 최대 100개 분석과 대표 원문 5개
+- 별점별 최대 100개 분석과 대표 원문 10개
 - 한 줄 결론, 신뢰도 산식, 장점·주의점, 제외 신호 보고서
 - Cloudflare Worker API, D1 마이그레이션, 7일/30일 만료 캐시
 - OpenAI API 키가 있을 때 `gpt-5-mini`로 한 줄 결론 보강
@@ -63,7 +63,18 @@ npx wrangler d1 migrations apply reviewmoa --remote --config worker/wrangler.tom
 npx wrangler deploy --config worker/wrangler.toml
 ```
 
-5. 배포 URL을 GitHub 저장소 변수 `VITE_API_BASE`로 등록한다.
+5. 배포가 끝나면 Wrangler가 다음과 같은 Worker URL을 출력한다.
+
+```text
+https://reviewmoa-api.<내-workers.dev-서브도메인>.workers.dev
+```
+
+이 주소가 `VITE_API_BASE`다. 별도로 발급받는 키가 아니라, 리뷰모아 API Worker의
+공개 기본 URL이다. Cloudflare 대시보드의 `Workers & Pages → reviewmoa-api →
+Settings → Domains & Routes`에서도 확인할 수 있다.
+
+6. GitHub 저장소의 `Settings → Secrets and variables → Actions → Variables`에서
+`VITE_API_BASE`라는 Repository variable을 만들고 위 URL을 값으로 등록한다.
 
 GitHub Actions를 쓸 때는 `CLOUDFLARE_API_TOKEN`,
 `CLOUDFLARE_ACCOUNT_ID`를 저장소 Secrets로 등록한다.

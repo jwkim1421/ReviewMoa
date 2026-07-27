@@ -46,6 +46,17 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
   );
   const strength = strengths.find((item) => item.mentions > 0)?.label;
   const caution = cautions.find((item) => item.mentions > 0)?.label;
+  const positive = strength
+    ? `${strength}에 대한 만족이 반복적으로 확인됐어요.`
+    : "뚜렷하게 반복되는 좋은 점은 아직 확인되지 않았어요.";
+  const negative = caution
+    ? `${caution}에 대한 불만이 있어 구매 전에 확인이 필요해요.`
+    : "반복적으로 나타나는 큰 불만은 아직 확인되지 않았어요.";
+  const conclusion = strength && caution
+    ? `${strength}을 중요하게 본다면 적합하지만 ${caution}이 걱정된다면 비교 후 선택하세요.`
+    : strength
+      ? `${strength}을 중요하게 보는 구매자에게 무난한 선택이에요.`
+      : "표본이 충분하지 않아 대표 원문을 먼저 확인하는 편이 안전해요.";
 
   return {
     id: crypto.randomUUID(),
@@ -59,6 +70,7 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
       : strength
         ? `${strength} 만족이 반복되지만 별점별 원문도 함께 확인하는 것이 좋아요.`
         : "충분한 반복 의견이 없어 별점별 대표 원문을 먼저 확인하는 편이 안전해요.",
+    analysis: { positive, negative, conclusion },
     confidence,
     confidenceReasons: [`별점별 정상 리뷰 ${included.length}개 반영`, `의심 신호 ${excluded}개 제외`],
     strengths,
@@ -75,7 +87,7 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
         summary: accepted.length
           ? `${rating}점 최신 정상 리뷰 ${accepted.length}개를 확인했습니다.`
           : `최근 ${rating}점 리뷰가 확인되지 않았습니다.`,
-        reviews: accepted.slice(0, 5),
+        reviews: accepted.slice(0, 10),
       };
     }),
     limitations: [
