@@ -3,6 +3,7 @@ import type { ProductIdentity, RawReview } from "../domain/types";
 type ExtensionResult = {
   status: string;
   reason?: string;
+  message?: string;
   product?: { name?: string; url?: string };
   reviews?: RawReview[];
 };
@@ -49,7 +50,10 @@ export async function collectWithExtension(
     }>("REVIEWMOA_GET_STATE");
     const current = state.result ?? state.activeJob;
     if (current) onStatus(current);
-    if (state.result?.reviews?.length) return state.result;
+    if (
+      state.result?.reviews &&
+      ["completed", "partial"].includes(state.result.status)
+    ) return state.result;
     if (state.result?.status === "failed") throw new Error(state.result.reason || "리뷰 수집에 실패했습니다.");
   }
   throw new Error("리뷰 수집 대기 시간이 초과되었습니다. 상품 탭에서 다시 확인을 눌러 주세요.");

@@ -127,7 +127,8 @@ h1 em { color: var(--orange); font-style: normal; }
 }
 .search-box button svg { color: white; }
 .search-box.has-error { border-color: #d35138; }
-.search-note { display: flex; align-items: center; justify-content: center; gap: 6px; color: #888176; font-size: 12px; }
+.search-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; color: #888176; font-size: 12px; }
+.search-note a { margin-left: 4px; color: var(--green); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .form-error { display: flex; align-items: center; justify-content: center; gap: 6px; color: #b53d2d; font-size: 13px; }
 
 .probe-card {

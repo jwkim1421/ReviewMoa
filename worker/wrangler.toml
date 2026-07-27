@@ -5,6 +5,8 @@ compatibility_date = "2026-07-27"
 [vars]
 ALLOWED_ORIGIN = "https://reviewmoa.kro.kr"
 AI_MODEL = "gpt-5-mini"
+OPENROUTER_MODEL = "openrouter/free"
+AI_DAILY_LIMIT = "40"
 
 [[d1_databases]]
 binding = "DB"

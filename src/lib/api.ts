@@ -1,4 +1,4 @@
-import { createDemoReport } from "../domain/demo";
+import { createLocalReport } from "../domain/analyze";
 import type { ProductIdentity, RawReview, Report, ReviewCapability } from "../domain/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE?.replace(/\/$/, "");
@@ -21,14 +21,12 @@ export async function probeProduct(product: ProductIdentity): Promise<{
     await new Promise((resolve) => setTimeout(resolve, 900));
     return {
       capability: {
-        status: product.experimental ? "partial" : "verified",
-        hasReviewArea: true,
-        supportsNewestSort: true,
-        supportsRatingFilter: !product.experimental,
+        status: "partial",
+        hasReviewArea: false,
+        supportsNewestSort: false,
+        supportsRatingFilter: false,
         requiresLogin: false,
-        message: product.experimental
-          ? "범용 방식으로 리뷰 영역을 확인합니다."
-          : `${product.sourceLabel} 상품 URL 형식을 확인했습니다.`,
+        message: `${product.sourceLabel} 상품 URL 형식을 확인했습니다. 확장 프로그램에서 리뷰 영역을 검증합니다.`,
       },
     };
   }
@@ -40,21 +38,22 @@ export async function probeProduct(product: ProductIdentity): Promise<{
 
 export async function analyzeProduct(product: ProductIdentity, reviews?: RawReview[]): Promise<Report> {
   if (!API_BASE) {
+    if (!reviews) throw new Error("REVIEW_COLLECTION_REQUIRED");
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    return createDemoReport(product);
+    return createLocalReport(product, reviews, "상품 리뷰 분석");
   }
+  if (!reviews) throw new Error("REVIEW_COLLECTION_REQUIRED");
   const job = await request<{ id: string }>("/v1/jobs", {
     method: "POST",
     body: JSON.stringify({ product }),
   });
-  if (reviews?.length) {
+  if (reviews.length) {
     for (let index = 0; index < reviews.length; index += 100) {
       await request(`/v1/jobs/${job.id}/reviews`, {
         method: "POST",
         body: JSON.stringify({ reviews: reviews.slice(index, index + 100) }),
       });
     }
-    return request(`/v1/jobs/${job.id}/complete`, { method: "POST" });
   }
-  return request(`/v1/jobs/${job.id}/demo-complete`, { method: "POST" });
+  return request(`/v1/jobs/${job.id}/complete`, { method: "POST" });
 }

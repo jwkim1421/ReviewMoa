@@ -24,6 +24,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "REVIEWMOA_COLLECTION_PROGRESS") {
+    chrome.storage.local.get(ACTIVE_KEY).then((state) => {
+      const activeJob = state[ACTIVE_KEY];
+      if (!activeJob || activeJob.id !== message.payload?.jobId) return;
+      return chrome.storage.local.set({
+        [ACTIVE_KEY]: { ...activeJob, ...message.payload },
+      });
+    }).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (message?.type === "REVIEWMOA_COLLECTION_RESULT") {
     const result = { ...message.payload, receivedAt: new Date().toISOString() };
     chrome.storage.local.get(ACTIVE_KEY).then((state) => {

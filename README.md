@@ -9,12 +9,12 @@
 - 미지원 사이트의 시험적 URL 처리
 - 리뷰 접근 가능성 확인 화면과 로그인·CAPTCHA 중단 상태
 - Chrome/Edge Manifest V3 수집 도우미
-- 화면에 공개된 리뷰의 별점·날짜·본문·옵션 추출
+- 리뷰 탭·최신순·별점 필터·페이지/더보기 탐색과 공개 리뷰 추출
 - 광고성, 중복, 평점 불일치 의심 분류
 - 별점별 최대 100개 분석과 대표 원문 10개
-- 좋은 점·아쉬운 점·결론의 3문장 AI 분석, 신뢰도 산식, 제외 신호 보고서
+- OpenRouter 또는 규칙 기반의 좋은 점·아쉬운 점·결론 3문장 분석
 - Cloudflare Worker API, D1 마이그레이션, 7일/30일 만료 캐시
-- OpenAI API 키가 있을 때 `gpt-5-mini`로 3문장 AI 분석 보강
+- OpenRouter 키가 있을 때 무료 모델 라우터로 AI 분석 보강
 - GitHub Pages 및 Cloudflare Worker 배포 워크플로
 
 ## 로컬 실행
@@ -36,10 +36,11 @@ npm run dev
 5. 로그인이 필요하면 쇼핑몰 화면에서 직접 로그인하고 확장 팝업의
    `현재 페이지에서 다시 확인`을 누른다.
 
-현재 수집기는 보이는 리뷰 DOM을 안전하게 읽는 공통 기반까지 구현되어 있다. 사이트별
-페이지 이동과 별점 필터 자동화는 [접근성 검증 매트릭스](docs/access-matrix.md)의
-실상품 검증을 통과한 뒤 활성화해야 한다. 검증되지 않은 사이트를 `완전 지원`으로
-표시하지 않는다.
+수집기는 리뷰 탭, 최신순, 별점 필터, 페이지/더보기를 공통 방식과 사이트별 후보
+선택자로 탐색한다. 다만 쇼핑몰 DOM은 계속 바뀌므로 [접근성 검증
+매트릭스](docs/access-matrix.md)의 실상품 검증을 통과하기 전에는 `완전 지원`으로
+표시하지 않는다. 자동 탐색이 실패하면 사용자가 리뷰 탭이나 필터를 직접 연 뒤
+확장 프로그램의 `현재 페이지에서 다시 확인`으로 재개한다.
 
 ## Cloudflare API 배포
 
@@ -53,8 +54,11 @@ npx wrangler d1 create reviewmoa
 3. 필요한 비밀값을 등록한다.
 
 ```bash
-npx wrangler secret put OPENAI_API_KEY --config worker/wrangler.toml
+npx wrangler secret put OPENROUTER_API_KEY --config worker/wrangler.toml
 ```
+
+기본 모델은 무료 모델 중 요청 기능을 지원하는 모델을 고르는 `openrouter/free`다.
+OpenRouter 호출이 실패하거나 한도에 도달하면 규칙 기반 분석 결과를 유지한다.
 
 4. 마이그레이션과 Worker를 배포한다.
 

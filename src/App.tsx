@@ -51,6 +51,37 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [view]);
 
+  async function collectAndAnalyze(resolved: ProductIdentity) {
+    const extensionInstalled = await hasCollectorExtension();
+    if (!extensionInstalled) {
+      throw new Error(
+        "실제 리뷰를 수집하려면 리뷰모아 Chrome/Edge 확장 프로그램을 먼저 설치해 주세요.",
+      );
+    }
+    const collection = await collectWithExtension(resolved, (status) => {
+      setCapability((previous) => ({
+        status: status.status === "waiting_for_login" ? "login_required" : previous?.status ?? "partial",
+        hasReviewArea: previous?.hasReviewArea ?? true,
+        supportsNewestSort: previous?.supportsNewestSort ?? false,
+        supportsRatingFilter: previous?.supportsRatingFilter ?? false,
+        requiresLogin: status.status === "waiting_for_login",
+        message:
+          status.status === "waiting_for_login"
+            ? "상품 탭에서 로그인한 뒤 확장 프로그램의 ‘다시 확인’을 눌러 주세요."
+            : status.status === "waiting_for_user"
+              ? "상품 탭에서 리뷰 영역이나 CAPTCHA를 직접 확인해 주세요."
+              : status.message ?? "공개된 리뷰를 정리하고 있습니다.",
+      }));
+    });
+    return import.meta.env.VITE_API_BASE
+      ? analyzeProduct(resolved, collection.reviews)
+      : createLocalReport(
+          resolved,
+          collection.reviews ?? [],
+          collection.product?.name ?? "상품 리뷰 분석",
+        );
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -67,35 +98,7 @@ export function App() {
         return;
       }
       setProbeStep(2);
-      const extensionInstalled = await hasCollectorExtension();
-      if (!extensionInstalled) {
-        const nextReport = await analyzeProduct(resolved);
-        setReport(nextReport);
-        setView("report");
-        return;
-      }
-      const collection = await collectWithExtension(resolved, (status) => {
-        setCapability((previous) => ({
-          status: status.status === "waiting_for_login" ? "login_required" : previous?.status ?? "partial",
-          hasReviewArea: previous?.hasReviewArea ?? true,
-          supportsNewestSort: previous?.supportsNewestSort ?? false,
-          supportsRatingFilter: previous?.supportsRatingFilter ?? false,
-          requiresLogin: status.status === "waiting_for_login",
-          message:
-            status.status === "waiting_for_login"
-              ? "상품 탭에서 로그인한 뒤 확장 프로그램의 ‘다시 확인’을 눌러 주세요."
-              : status.status === "waiting_for_user"
-                ? "상품 탭에서 리뷰 영역이나 CAPTCHA를 직접 확인해 주세요."
-                : "공개된 리뷰를 정리하고 있습니다.",
-        }));
-      });
-      const nextReport = import.meta.env.VITE_API_BASE
-        ? await analyzeProduct(resolved, collection.reviews)
-        : createLocalReport(
-            resolved,
-            collection.reviews ?? [],
-            collection.product?.name ?? "상품 리뷰 분석",
-          );
+      const nextReport = await collectAndAnalyze(resolved);
       setReport(nextReport);
       setView("report");
     } catch (caught) {
@@ -106,11 +109,17 @@ export function App() {
 
   async function refresh() {
     if (!product) return;
-    setView("probing");
-    setProbeStep(0);
-    const nextReport = await analyzeProduct(product);
-    setReport(nextReport);
-    setView("report");
+    setError("");
+    try {
+      setView("probing");
+      setProbeStep(0);
+      const nextReport = await collectAndAnalyze(product);
+      setReport(nextReport);
+      setView("report");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "리뷰를 다시 수집하지 못했습니다.");
+      setView("home");
+    }
   }
 
   function reset() {
@@ -192,7 +201,12 @@ function Home({
           <button type="submit">리뷰 확인 <ArrowRight size={18} /></button>
         </form>
         {error ? <p className="form-error"><AlertTriangle size={14} /> {error}</p> : (
-          <p className="search-note"><ShieldCheck size={14} /> 먼저 리뷰 접근 가능 여부를 확인하며, 로그인 정보는 저장하지 않습니다.</p>
+          <p className="search-note">
+            <ShieldCheck size={14} /> 먼저 리뷰 접근 가능 여부를 확인하며, 로그인 정보는 저장하지 않습니다.
+            <a href="https://github.com/jwkim1421/ReviewMoa/tree/master/extension" target="_blank" rel="noreferrer">
+              확장 프로그램 설치 안내
+            </a>
+          </p>
         )}
       </section>
       <section className="sources" aria-label="지원 쇼핑몰">
@@ -368,7 +382,9 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
 
       <section className="verdict-card">
         <div className="verdict-copy">
-          <span className="section-label">AI 분석 결과</span>
+          <span className="section-label">
+            {["openrouter", "openai"].includes(report.analysisProvider ?? "") ? "AI 분석 결과" : "리뷰 분석 결과"}
+          </span>
           <div className="analysis-lines">
             <p><strong>좋은 점</strong><span>{analysis.positive}</span></p>
             <p><strong>아쉬운 점</strong><span>{analysis.negative}</span></p>

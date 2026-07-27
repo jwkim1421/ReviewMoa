@@ -84,6 +84,7 @@ export interface Report {
     negative: string;
     conclusion: string;
   };
+  analysisProvider?: "openrouter" | "openai" | "rules";
   confidence: number;
   confidenceReasons: string[];
   strengths: Array<{ label: string; mentions: number; ratio: number }>;
@@ -92,5 +93,6 @@ export interface Report {
   ratings: RatingSummary[];
   limitations: string[];
   cached: boolean;
+  collectionVerified?: boolean;
   demo?: boolean;
 }

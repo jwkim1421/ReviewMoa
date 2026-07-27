@@ -71,6 +71,7 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
         ? `${strength} 만족이 반복되지만 별점별 원문도 함께 확인하는 것이 좋아요.`
         : "충분한 반복 의견이 없어 별점별 대표 원문을 먼저 확인하는 편이 안전해요.",
     analysis: { positive, negative, conclusion },
+    analysisProvider: "rules",
     confidence,
     confidenceReasons: [`별점별 정상 리뷰 ${included.length}개 반영`, `의심 신호 ${excluded}개 제외`],
     strengths,
@@ -91,8 +92,14 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
       };
     }),
     limitations: [
-      "현재 화면에 공개된 리뷰만 수집했습니다. 리뷰 탭의 추가 페이지는 사이트별 검증 후 순차 지원합니다.",
+      "자동 탐색으로 공개된 리뷰를 수집했으며, 사이트별 실상품 검증 전에는 일부 페이지가 누락될 수 있습니다.",
+      ...(included.length > 0 && included.every((review) => !review.createdAt)
+        ? ["작성일을 확인할 수 없어 사이트 제공 순서 기준으로 정리했습니다."]
+        : included.some((review) => !review.createdAt)
+          ? ["일부 리뷰의 작성일을 확인할 수 없어 사이트 제공 순서를 함께 사용했습니다."]
+          : []),
     ],
     cached: false,
+    collectionVerified: true,
   };
 }

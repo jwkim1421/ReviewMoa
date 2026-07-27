@@ -1,5 +1,5 @@
 import { createReport, enhanceVerdictWithAi } from "./analyze";
-import type { Env, StoredReview } from "./types";
+import type { AppEnv, StoredReview } from "./types";
 
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8" };
 
@@ -20,7 +20,7 @@ function addDays(days: number) {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
-function allowedOrigin(request: Request, env: Env) {
+function allowedOrigin(request: Request, env: AppEnv) {
   const origin = request.headers.get("Origin") ?? "";
   if (/^chrome-extension:\/\//.test(origin)) return origin;
   if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
@@ -35,15 +35,33 @@ async function readBody<T>(request: Request): Promise<T> {
   }
 }
 
-async function cleanup(env: Env) {
+async function cleanup(env: AppEnv) {
   const now = new Date().toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM reviews WHERE raw_expires_at < ?").bind(now),
     env.DB.prepare("DELETE FROM reports WHERE report_expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM ai_daily_usage WHERE day < ?").bind(sevenDaysAgo),
   ]);
 }
 
-async function handle(request: Request, env: Env) {
+async function reserveAiRequest(env: AppEnv) {
+  const now = new Date().toISOString();
+  const day = now.slice(0, 10);
+  const limit = Math.max(1, Number(env.AI_DAILY_LIMIT) || 40);
+  const reservation = await env.DB.prepare(
+    `INSERT INTO ai_daily_usage(day, request_count, updated_at)
+     VALUES(?, 1, ?)
+     ON CONFLICT(day) DO UPDATE SET
+       request_count = request_count + 1,
+       updated_at = excluded.updated_at
+     WHERE request_count < ?
+     RETURNING request_count`,
+  ).bind(day, now, limit).first<{ request_count: number }>();
+  return Boolean(reservation);
+}
+
+async function handle(request: Request, env: AppEnv) {
   const url = new URL(request.url);
   const origin = allowedOrigin(request, env);
   if (request.method === "OPTIONS") return json(null, 204, origin);
@@ -65,30 +83,33 @@ async function handle(request: Request, env: Env) {
     let cachedReport: Record<string, unknown> | undefined;
     if (cached) {
       cachedReport = JSON.parse(cached.report_json) as Record<string, unknown>;
-      const rawExpired = typeof cachedReport.rawExpiresAt === "string" &&
-        cachedReport.rawExpiresAt < new Date().toISOString();
-      if (rawExpired && Array.isArray(cachedReport.ratings)) {
-        cachedReport = {
-          ...cachedReport,
-          ratings: cachedReport.ratings.map((rating) => ({
-            ...(rating as Record<string, unknown>),
-            reviews: [],
-          })),
-          limitations: [
-            ...((cachedReport.limitations as string[] | undefined) ?? []),
-            "원문 보존 기간 7일이 지나 대표 리뷰 원문이 만료되었습니다. 다시 불러오면 최신 원문을 확인할 수 있습니다.",
-          ],
-        };
+      if (cachedReport.collectionVerified !== true) cachedReport = undefined;
+      if (cachedReport) {
+        const rawExpired = typeof cachedReport.rawExpiresAt === "string" &&
+          cachedReport.rawExpiresAt < new Date().toISOString();
+        if (rawExpired && Array.isArray(cachedReport.ratings)) {
+          cachedReport = {
+            ...cachedReport,
+            ratings: cachedReport.ratings.map((rating) => ({
+              ...(rating as Record<string, unknown>),
+              reviews: [],
+            })),
+            limitations: [
+              ...((cachedReport.limitations as string[] | undefined) ?? []),
+              "원문 보존 기간 7일이 지나 대표 리뷰 원문이 만료되었습니다. 다시 불러오면 최신 원문을 확인할 수 있습니다.",
+            ],
+          };
+        }
       }
     }
     return json({
       capability: {
-        status: body.product.experimental ? "partial" : "verified",
-        hasReviewArea: true,
-        supportsNewestSort: true,
-        supportsRatingFilter: !body.product.experimental,
+        status: "partial",
+        hasReviewArea: false,
+        supportsNewestSort: false,
+        supportsRatingFilter: false,
         requiresLogin: false,
-        message: "확장 프로그램에서 실제 리뷰 영역을 다시 확인합니다.",
+        message: "상품 URL을 확인했습니다. 확장 프로그램에서 실제 리뷰 영역과 필터를 검증합니다.",
       },
       report: cachedReport ? { ...cachedReport, cached: true } : undefined,
     }, 200, origin);
@@ -145,12 +166,24 @@ async function handle(request: Request, env: Env) {
     return json({ accepted: statements.length }, 200, origin);
   }
 
-  if (request.method === "POST" && (action === "complete" || action === "demo-complete")) {
+  if (request.method === "POST" && action === "complete") {
     const rows = (await env.DB.prepare(
       "SELECT review_id, rating, content, created_at, option_name, classification FROM reviews WHERE job_id = ? ORDER BY created_at DESC",
     ).bind(jobId).all<StoredReview>()).results ?? [];
     let report = createReport(jobId, JSON.parse(job.product_json), rows);
-    report = await enhanceVerdictWithAi(report, rows, env.OPENAI_API_KEY, env.AI_MODEL);
+    const provider = env.OPENROUTER_API_KEY ? "openrouter" : "openai";
+    const apiKey = env.OPENROUTER_API_KEY ?? env.OPENAI_API_KEY;
+    if (apiKey && rows.length && await reserveAiRequest(env)) {
+      report = await enhanceVerdictWithAi(report, rows, {
+        provider,
+        apiKey,
+        model: provider === "openrouter"
+          ? env.OPENROUTER_MODEL ?? "openrouter/free"
+          : env.AI_MODEL ?? "gpt-5-mini",
+      });
+    } else if (apiKey && rows.length) {
+      report.limitations.push("오늘의 무료 AI 분석 한도에 도달해 규칙 기반 결과를 표시합니다.");
+    }
     const reportJson = JSON.stringify(report);
     await env.DB.batch([
       env.DB.prepare(
@@ -182,7 +215,7 @@ async function handle(request: Request, env: Env) {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: AppEnv): Promise<Response> {
     try {
       return await handle(request, env);
     } catch (error) {
@@ -190,4 +223,4 @@ export default {
       return json({ error: message }, message === "INVALID_JSON" ? 400 : 500, allowedOrigin(request, env));
     }
   },
-};
+} satisfies ExportedHandler<AppEnv>;

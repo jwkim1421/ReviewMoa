@@ -99,6 +99,7 @@ export function createDemoReport(product: ProductIdentity): Report {
       negative: "내구성 불만이 반복되어 장기 사용은 신중한 선택이 필요해요.",
       conclusion: "일상적인 용도에는 적합하지만 오래 쓸 제품을 찾는다면 다른 상품과 비교해보세요.",
     },
+    analysisProvider: "rules",
     confidence: 82,
     confidenceReasons: ["별점별 목표 리뷰의 80% 이상 확보", "핵심 장단점이 여러 리뷰에서 반복됨"],
     strengths: [

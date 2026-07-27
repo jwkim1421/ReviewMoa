@@ -78,6 +78,7 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
     reportExpiresAt,
     verdict,
     analysis,
+    analysisProvider: "rules",
     confidence: confidence(included, excluded),
     confidenceReasons: [
       `별점별 정상 리뷰 ${included.length}개 반영`,
@@ -107,66 +108,150 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
         })),
       };
     }),
-    limitations: included.length < 50 ? ["표본이 적어 신뢰도가 낮을 수 있습니다."] : [],
+    limitations: [
+      "쇼핑몰별 리뷰 탭과 필터 자동화는 비공개 베타 검증 중이어서 일부 리뷰가 누락될 수 있습니다.",
+      ...(included.length < 50 ? ["표본이 적어 신뢰도가 낮을 수 있습니다."] : []),
+      ...(included.length > 0 && included.every((review) => !review.created_at)
+        ? ["작성일을 확인할 수 없어 사이트 제공 순서 기준으로 정리했습니다."]
+        : included.some((review) => !review.created_at)
+          ? ["일부 리뷰의 작성일을 확인할 수 없어 사이트 제공 순서를 함께 사용했습니다."]
+          : []),
+    ],
     cached: false,
+    collectionVerified: true,
   };
+}
+
+type AiProvider = "openrouter" | "openai";
+
+interface AiConfig {
+  provider: AiProvider;
+  apiKey?: string;
+  model: string;
+}
+
+interface AiPayload {
+  output_text?: string;
+  output?: Array<{
+    content?: Array<{ type?: string; text?: string }>;
+  }>;
+}
+
+export function parseAiPayload(payload: AiPayload) {
+  const outputText = payload.output_text ?? payload.output
+    ?.flatMap((item) => item.content ?? [])
+    .find((item) => item.type === "output_text")
+    ?.text;
+  if (!outputText) return null;
+  try {
+    const parsed = JSON.parse(outputText) as {
+      positive?: unknown;
+      negative?: unknown;
+      conclusion?: unknown;
+    };
+    return typeof parsed.positive === "string" &&
+      typeof parsed.negative === "string" &&
+      typeof parsed.conclusion === "string"
+      ? {
+          positive: parsed.positive.trim(),
+          negative: parsed.negative.trim(),
+          conclusion: parsed.conclusion.trim(),
+        }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function enhanceVerdictWithAi<T extends Record<string, unknown>>(
   report: T,
   reviews: StoredReview[],
-  apiKey: string | undefined,
-  model = "gpt-5-mini",
+  config: AiConfig,
 ): Promise<T> {
-  if (!apiKey || reviews.length === 0) return report;
-  const input = reviews.slice(0, 500).map((review) => ({
-    rating: review.rating,
-    content: review.content.slice(0, 700),
-  }));
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      store: false,
-      input: [
-        {
-          role: "system",
-          content: "한국어 상품 리뷰만 근거로 좋은 점, 나쁜 점, 최종 결론을 각각 한 문장으로 작성한다. 근거 없는 사실을 만들지 않는다.",
-        },
-        { role: "user", content: JSON.stringify(input) },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "review_analysis",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              positive: { type: "string" },
-              negative: { type: "string" },
-              conclusion: { type: "string" }
-            },
-            required: ["positive", "negative", "conclusion"],
-            additionalProperties: false,
+  if (!config.apiKey || reviews.length === 0) return report;
+  const input = [5, 4, 3, 2, 1].flatMap((rating) =>
+    reviews
+      .filter((review) =>
+        review.rating === rating &&
+        ["included", "uncertain"].includes(review.classification)
+      )
+      .slice(0, 40)
+      .map((review) => ({
+        rating: review.rating,
+        content: review.content.slice(0, 500),
+      }))
+  );
+  if (input.length === 0) return report;
+
+  const endpoint = config.provider === "openrouter"
+    ? "https://openrouter.ai/api/v1/responses"
+    : "https://api.openai.com/v1/responses";
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${config.apiKey}`,
+    "Content-Type": "application/json",
+  };
+  if (config.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://reviewmoa.kro.kr";
+    headers["X-OpenRouter-Title"] = "리뷰모아";
+  }
+  const requestBody: Record<string, unknown> = {
+    model: config.model,
+    input: [
+      {
+        role: "system",
+        content: "제공된 한국어 상품 리뷰만 근거로 좋은 점, 아쉬운 점, 최종 결론을 각각 한 문장으로 작성한다. 광고성·중복·평점 불일치로 제외된 리뷰는 입력에 포함되지 않는다. 근거 없는 사실을 만들지 않는다.",
+      },
+      { role: "user", content: JSON.stringify(input) },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "review_analysis",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            positive: { type: "string" },
+            negative: { type: "string" },
+            conclusion: { type: "string" },
           },
+          required: ["positive", "negative", "conclusion"],
+          additionalProperties: false,
         },
       },
-    }),
-  });
-  if (!response.ok) return report;
-  const payload = await response.json() as { output_text?: string };
+    },
+  };
+  if (config.provider === "openai") requestBody.store = false;
+
   try {
-    const parsed = JSON.parse(payload.output_text ?? "{}") as {
-      positive?: string;
-      negative?: string;
-      conclusion?: string;
-    };
-    return parsed.positive && parsed.negative && parsed.conclusion
-      ? { ...report, verdict: parsed.conclusion, analysis: parsed } as T
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestBody),
+    });
+    if (!response.ok) {
+      console.error(JSON.stringify({
+        message: "AI analysis request failed",
+        provider: config.provider,
+        status: response.status,
+      }));
+      return report;
+    }
+    const parsed = parseAiPayload(await response.json() as AiPayload);
+    return parsed
+      ? {
+          ...report,
+          verdict: parsed.conclusion,
+          analysis: parsed,
+          analysisProvider: config.provider,
+        } as T
       : report;
-  } catch {
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: "AI analysis unavailable; using rule-based fallback",
+      provider: config.provider,
+      error: error instanceof Error ? error.message : "unknown",
+    }));
     return report;
   }
 }

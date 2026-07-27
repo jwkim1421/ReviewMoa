@@ -41,7 +41,7 @@
         "https://*.ssg.com/*",
         "https://*.gmarket.co.kr/*"
       ],
-      "js": ["content.js"],
+      "js": ["site-configs.js", "content.js"],
       "run_at": "document_idle"
     }
   ]
