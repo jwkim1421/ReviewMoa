@@ -9,5 +9,5 @@ AI_MODEL = "gpt-5-mini"
 [[d1_databases]]
 binding = "DB"
 database_name = "reviewmoa"
-database_id = "REPLACE_WITH_CLOUDFLARE_D1_DATABASE_ID"
+database_id = "f0a26a41-3935-48c9-9ace-74bb74d7eecd"
 migrations_dir = "migrations"
