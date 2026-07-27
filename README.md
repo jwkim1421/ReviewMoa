@@ -12,9 +12,9 @@
 - 화면에 공개된 리뷰의 별점·날짜·본문·옵션 추출
 - 광고성, 중복, 평점 불일치 의심 분류
 - 별점별 최대 100개 분석과 대표 원문 10개
-- 한 줄 결론, 신뢰도 산식, 장점·주의점, 제외 신호 보고서
+- 좋은 점·아쉬운 점·결론의 3문장 AI 분석, 신뢰도 산식, 제외 신호 보고서
 - Cloudflare Worker API, D1 마이그레이션, 7일/30일 만료 캐시
-- OpenAI API 키가 있을 때 `gpt-5-mini`로 한 줄 결론 보강
+- OpenAI API 키가 있을 때 `gpt-5-mini`로 3문장 AI 분석 보강
 - GitHub Pages 및 Cloudflare Worker 배포 워크플로
 
 ## 로컬 실행
@@ -82,7 +82,7 @@ GitHub Actions를 쓸 때는 `CLOUDFLARE_API_TOKEN`,
 ## GitHub Pages와 도메인
 
 - 저장소의 Pages 소스를 `GitHub Actions`로 설정한다.
-- `main` 브랜치에 push하면 테스트와 빌드 후 Pages에 배포된다.
+- `main` 또는 `master` 브랜치에 push하면 테스트와 빌드 후 Pages에 배포된다.
 - `public/CNAME`은 `reviewmoa.kro.kr`로 설정되어 있다.
 - 무료 도메인 DNS에 GitHub Pages가 안내하는 `CNAME` 또는 `A` 레코드를 추가한다.
 
