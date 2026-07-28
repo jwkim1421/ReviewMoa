@@ -4,7 +4,8 @@ import type { AppEnv, StoredReview } from "./types";
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8" };
 
 function json(data: unknown, status = 200, origin = "*") {
-  return new Response(JSON.stringify(data), {
+  const body = status === 204 ? null : JSON.stringify(data);
+  return new Response(body, {
     status,
     headers: {
       ...JSON_HEADERS,
