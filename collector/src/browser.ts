@@ -7,6 +7,7 @@ export async function launchCollectorBrowser(config: CollectorConfig): Promise<B
   return chromium.launchPersistentContext(config.profileDir, {
     channel: "chrome",
     headless: config.headless,
+    ignoreDefaultArgs: ["--no-sandbox"],
     viewport: { width: 1440, height: 1000 },
   });
 }

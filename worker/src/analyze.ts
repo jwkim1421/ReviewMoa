@@ -142,6 +142,8 @@ interface AiPayload {
   }>;
 }
 
+const AI_REQUEST_TIMEOUT_MS = 8_000;
+
 export function parseAiPayload(payload: AiPayload) {
   const outputText = payload.output_text ?? payload.output
     ?.flatMap((item) => item.content ?? [])
@@ -233,6 +235,7 @@ export async function enhanceVerdictWithAi<T extends Record<string, unknown>>(
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) {
       console.error(JSON.stringify({

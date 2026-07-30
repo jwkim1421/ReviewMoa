@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker from "./index";
 import type { AppEnv } from "./types";
 
@@ -507,7 +507,8 @@ describe("collector queue API", () => {
       reason: "captcha",
     });
     const interrupt = statements.find((statement) =>
-      statement.sql.includes("status = 'waiting_for_operator'")
+      statement.sql.includes("status = 'waiting_for_operator'") &&
+      statement.sql.includes("interruption_reason = ?")
     );
     expect(interrupt?.bindings[0]).toBe("captcha");
     expect(interrupt?.sql).toContain("AND claimed_by = ?");
@@ -686,6 +687,110 @@ describe("collector queue API", () => {
       statement.sql.includes("AND status = 'analyzing'")
     );
     expect(finish?.bindings[0]).toBe("partial");
+  });
+
+  it("finishes an iPhone handoff without waiting for AI and allows a safe retry", async () => {
+    const operatorToken = "a".repeat(64);
+    const job = {
+      id: "job-1",
+      cache_key: "naver:123:all",
+      product_json: JSON.stringify({ source: "naver", productId: "123" }),
+      status: "waiting_for_operator",
+      capability_json: null,
+      error_code: null,
+      progress_json: null,
+      interruption_reason: "operator_required",
+      requested_at: "2026-07-30T00:00:00.000Z",
+      started_at: null,
+      finished_at: null,
+      operator_token_hash: "unused-by-fake-db",
+      operator_token_expires_at: "2099-01-01T00:00:00.000Z",
+      created_at: "2026-07-30T00:00:00.000Z",
+      updated_at: "2026-07-30T00:00:00.000Z",
+    };
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) return job;
+        if (sql.includes("handoff_source = 'ios-safari'")) {
+          return {
+            id: job.id,
+            cache_key: job.cache_key,
+            product_json: job.product_json,
+          };
+        }
+      },
+      rows(sql) {
+        return sql.includes("FROM reviews")
+          ? [{
+              review_id: "review-1",
+              rating: 5,
+              content: "배송이 빠르고 사용하기 편합니다.",
+              created_at: "2026-07-30",
+              option_name: null,
+              classification: "included",
+            }]
+          : [];
+      },
+    });
+    const aiFetch = vi.fn();
+    vi.stubGlobal("fetch", aiFetch);
+
+    try {
+      const response = await worker.fetch(
+        new Request("https://api.example/v1/jobs/job-1/mobile-complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operatorToken,
+            reviews: [{
+              id: "review-1",
+              rating: 5,
+              content: "배송이 빠르고 사용하기 편합니다.",
+              createdAt: "2026-07-30",
+              classification: "included",
+            }],
+          }),
+        }),
+        collectorEnv(db, { OPENROUTER_API_KEY: "test-ai-key" }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        id: "job-1",
+        status: "completed",
+        report: {
+          analysisProvider: "rules",
+          limitations: expect.arrayContaining([
+            "iPhone에서 안정적으로 전송하기 위해 규칙 기반으로 즉시 분석했습니다.",
+          ]),
+        },
+      });
+      expect(aiFetch).not.toHaveBeenCalled();
+      const claim = statements.find((statement) =>
+        statement.sql.includes("handoff_source = 'ios-safari'")
+      );
+      expect(claim?.sql).toContain(
+        "OR (status = 'analyzing' AND claimed_by = 'mobile-safari')",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("recovers a stale interrupted iPhone analysis during cleanup", async () => {
+    const { db, statements } = createDb();
+    await worker.fetch(
+      new Request("https://api.example/v1/jobs/missing"),
+      collectorEnv(db),
+    );
+
+    const recovery = statements.find((statement) =>
+      statement.sql.includes("updated_at < ?") &&
+      statement.sql.includes("claimed_by = 'mobile-safari'")
+    );
+    expect(recovery?.sql).toContain("status = 'waiting_for_operator'");
+    expect(recovery?.sql).toContain("NOT EXISTS");
+    expect(recovery?.bindings[0]).toContain("다시 시도할 수 있어요");
   });
 
   it("does not expose the legacy public review upload and complete routes", async () => {

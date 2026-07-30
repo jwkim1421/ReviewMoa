@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createReport, parseAiPayload } from "./analyze";
+import { describe, expect, it, vi } from "vitest";
+import { createReport, enhanceVerdictWithAi, parseAiPayload } from "./analyze";
 import type { StoredReview } from "./types";
 
 describe("parseAiPayload", () => {
@@ -54,5 +54,35 @@ describe("createReport sample notice", () => {
 
     expect(report.sampleNotice).toContain("정상 리뷰가 1개로 충분하지 않습니다.");
     expect(report.ratings.find(({ rating }) => rating === 5)?.reviews).toHaveLength(1);
+  });
+});
+
+describe("AI fallback", () => {
+  it("sets a request timeout and preserves the rule-based report when AI fails", async () => {
+    const rows: StoredReview[] = [{
+      review_id: "review-1",
+      rating: 5,
+      content: "배송이 빠르고 만족합니다.",
+      created_at: "2026-07-29",
+      option_name: undefined,
+      classification: "included",
+    }];
+    const report = createReport("job-1", { name: "테스트 상품" }, rows);
+    const aiFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      throw new DOMException("Timed out", "TimeoutError");
+    });
+    vi.stubGlobal("fetch", aiFetch);
+
+    try {
+      await expect(enhanceVerdictWithAi(report, rows, {
+        provider: "openrouter",
+        apiKey: "test-key",
+        model: "openrouter/free",
+      })).resolves.toBe(report);
+      expect(aiFetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

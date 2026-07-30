@@ -217,10 +217,31 @@ function reportForResponse(
 async function cleanup(env: AppEnv) {
   const now = new Date().toISOString();
   const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const staleMobileAnalysis = new Date(Date.now() - 2 * 60_000).toISOString();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM reviews WHERE raw_expires_at < ?").bind(now),
     env.DB.prepare("DELETE FROM reports WHERE report_expires_at < ?").bind(now),
     env.DB.prepare("DELETE FROM ai_daily_usage WHERE day < ?").bind(sevenDaysAgo),
+    env.DB.prepare(
+      `UPDATE jobs
+       SET status = 'waiting_for_operator',
+           claimed_by = NULL,
+           progress_json = ?,
+           updated_at = ?
+       WHERE status = 'analyzing'
+         AND claimed_by = 'mobile-safari'
+         AND updated_at < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM reports WHERE reports.job_id = jobs.id
+         )`,
+    ).bind(
+      JSON.stringify({
+        stage: "waiting_for_operator",
+        message: "아이폰 전송이 중단되어 다시 시도할 수 있어요.",
+      }),
+      now,
+      staleMobileAnalysis,
+    ),
   ]);
 }
 
@@ -248,6 +269,7 @@ async function buildReport(
   options?: {
     summaryOnly?: boolean;
     mobileSafari?: boolean;
+    skipAi?: boolean;
   },
 ) {
   let report = createReport(jobId, JSON.parse(productJson), rows);
@@ -260,11 +282,14 @@ async function buildReport(
     report.confidenceReasons.push(
       "iPhone Safari에서 사용자가 보안 확인 후 수집한 공개 리뷰를 반영",
     );
+    report.limitations.push(
+      "iPhone에서 안정적으로 전송하기 위해 규칙 기반으로 즉시 분석했습니다.",
+    );
   }
 
   const provider = env.OPENROUTER_API_KEY ? "openrouter" : "openai";
   const apiKey = env.OPENROUTER_API_KEY ?? env.OPENAI_API_KEY;
-  if (apiKey && rows.length && await reserveAiRequest(env)) {
+  if (!options?.skipAi && apiKey && rows.length && await reserveAiRequest(env)) {
     report = await enhanceVerdictWithAi(report, rows, {
       provider,
       apiKey,
@@ -272,7 +297,7 @@ async function buildReport(
         ? env.OPENROUTER_MODEL ?? "openrouter/free"
         : env.AI_MODEL ?? "gpt-5-mini",
     });
-  } else if (apiKey && rows.length) {
+  } else if (!options?.skipAi && apiKey && rows.length) {
     report.limitations.push("오늘의 무료 AI 분석 한도에 도달해 규칙 기반 결과를 표시합니다.");
   }
   return report;
@@ -808,8 +833,13 @@ async function handle(request: Request, env: AppEnv) {
            handoff_source = 'ios-safari',
            updated_at = ?
        WHERE id = ?
-         AND status = 'waiting_for_operator'
-         AND interruption_reason IN ('captcha', 'login_required', 'operator_required')
+         AND (
+           (
+             status = 'waiting_for_operator'
+             AND interruption_reason IN ('captcha', 'login_required', 'operator_required')
+           )
+           OR (status = 'analyzing' AND claimed_by = 'mobile-safari')
+         )
          AND operator_token_hash = ?
          AND operator_token_expires_at >= ?
        RETURNING id, cache_key, product_json`,
@@ -862,6 +892,7 @@ async function handle(request: Request, env: AppEnv) {
       const report = await buildReport(env, jobId, claimed.product_json, rows, {
         summaryOnly: body.partialReason === "summary_only",
         mobileSafari: true,
+        skipAi: true,
       });
       const finalStatus = rows.length && body.partialReason !== "summary_only"
         ? "completed"
