@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductIdentity } from "../domain/types";
-import { createJob, getJob } from "./api";
+
+vi.stubEnv("VITE_API_BASE", "https://reviewmoa-api.test");
+const { createJob, getJob } = await import("./api");
 
 const PRODUCT: ProductIdentity = {
   source: "naver",
