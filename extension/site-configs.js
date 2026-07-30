@@ -5,6 +5,7 @@
       hosts: ["smartstore.naver.com", "shopping.naver.com", "brand.naver.com"],
       itemSelectors: [
         "[data-review-id]",
+        "[data-shp-contents-type='review']",
         "[class*='ReviewListItem']",
         "[class*='review_list'] > li",
         "[class*='purchase_review'] > li",

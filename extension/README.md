@@ -12,3 +12,16 @@
 
 로그인과 CAPTCHA는 쇼핑몰 화면에서 사용자가 직접 처리한다. 확장 프로그램은
 비밀번호나 로그인 쿠키를 읽어 서버로 전송하지 않는다.
+
+## iPhone Safari 인계
+
+같은 WebExtension 원본을 iPhone Safari 앱 확장으로 패키징할 수 있다. 중앙 Mac
+collector가 CAPTCHA·로그인·네이버 시스템 오류에서 멈추면, 요청을 시작한 iPhone의
+리뷰모아 웹에서 `이 iPhone에서 보안 확인하기`를 누른다.
+
+사용자가 Safari에서 보안 확인을 끝내면 확장이 상품 페이지 복귀를 자동 감지하고
+해당 Safari 세션에서 공개 리뷰를 수집해 작업별 일회성 토큰으로 Worker에 전송한다.
+iPhone의 보안 통과 쿠키는 Mac과 공유되지 않으므로 Mac collector가 아니라 Safari
+확장이 수집을 끝낸다.
+
+iOS 앱 패키징 방법은 [`safari/README.md`](../safari/README.md)를 참고한다.

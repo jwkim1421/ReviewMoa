@@ -2,6 +2,7 @@ const ALLOWED_TYPES = new Set([
   "REVIEWMOA_PING",
   "REVIEWMOA_START",
   "REVIEWMOA_GET_STATE",
+  "REVIEWMOA_MOBILE_HANDOFF",
 ]);
 
 window.addEventListener("message", async (event) => {

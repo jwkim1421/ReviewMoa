@@ -3,6 +3,11 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type CollectorHooks = {
+  detectInterruption(): {
+    status: string;
+    reason: string;
+    message: string;
+  } | null;
   extractRating(node: Element): number | null;
   readVisibleReviews(
     config: unknown,
@@ -69,6 +74,30 @@ describe("review collector", () => {
     expect(reviews[1]).toMatchObject({ id: "r2", rating: 4, classification: "sponsored" });
   });
 
+  it("extracts a Naver data-shp review with a visible star score", () => {
+    document.body.innerHTML = `
+      <article
+        data-shp-contents-type="review"
+        data-shp-contents-id="naver-review-503"
+      >
+        <span>★ 5</span>
+        <p>포장이 꼼꼼하고 아이가 잘 먹어서 만족합니다.</p>
+        <time>2026.07.19.</time>
+      </article>
+    `;
+    const reviews = collector.readVisibleReviews(undefined, {
+      duplicateBodies: new Set(),
+      seenKeys: new Set(),
+    });
+    expect(reviews).toEqual([
+      expect.objectContaining({
+        id: "naver-review-503",
+        rating: 5,
+        classification: "included",
+      }),
+    ]);
+  });
+
   it("keeps at most one hundred included reviews per rating", () => {
     const rows = Array.from({ length: 115 }, (_, index) => ({
       id: `review-${index}`,
@@ -80,5 +109,18 @@ describe("review collector", () => {
     const selected = collector.selectLatestByRating(rows);
     expect(selected.filter((review) => review.classification === "included")).toHaveLength(100);
     expect(selected.filter((review) => review.classification === "sponsored")).toHaveLength(5);
+  });
+
+  it("recognizes Naver receipt security verification as CAPTCHA", () => {
+    document.body.innerHTML = `
+      <main>
+        <h1>NAVER 보안 확인을 완료해 주세요.</h1>
+        <p>해당 영수증은 가상으로 제작되었습니다. 빈 칸을 채워주세요.</p>
+      </main>
+    `;
+    expect(collector.detectInterruption()).toMatchObject({
+      status: "waiting_for_user",
+      reason: "captcha",
+    });
   });
 });

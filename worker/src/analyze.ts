@@ -36,6 +36,11 @@ function confidence(reviews: StoredReview[], excluded: number) {
 export function createReport(jobId: string, product: Record<string, unknown>, rows: StoredReview[]) {
   const included = rows.filter((review) => ["included", "uncertain"].includes(review.classification));
   const excluded = rows.length - included.length;
+  const sampleNotice = included.length < 50
+    ? included.length
+      ? `정상 리뷰가 ${included.length}개로 충분하지 않습니다. 아래 내용은 확인된 리뷰만 기준으로 정리했으니 참고용으로 봐 주세요.`
+      : "정상 리뷰가 확인되지 않아 충분한 판단 근거가 없습니다. 확인 가능한 정보만 정리했으니 참고용으로 봐 주세요."
+    : undefined;
   const now = new Date();
   const rawExpiresAt = new Date(now.getTime() + 7 * 86_400_000).toISOString();
   const reportExpiresAt = new Date(now.getTime() + 30 * 86_400_000).toISOString();
@@ -84,6 +89,7 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
       `별점별 정상 리뷰 ${included.length}개 반영`,
       `의심 신호 ${excluded}개를 주 분석에서 제외`,
     ],
+    sampleNotice,
     strengths,
     cautions,
     anomalyCounts,
@@ -110,7 +116,6 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
     }),
     limitations: [
       "쇼핑몰별 리뷰 탭과 필터 자동화는 비공개 베타 검증 중이어서 일부 리뷰가 누락될 수 있습니다.",
-      ...(included.length < 50 ? ["표본이 적어 신뢰도가 낮을 수 있습니다."] : []),
       ...(included.length > 0 && included.every((review) => !review.created_at)
         ? ["작성일을 확인할 수 없어 사이트 제공 순서 기준으로 정리했습니다."]
         : included.some((review) => !review.created_at)

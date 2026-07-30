@@ -200,6 +200,7 @@ h1 em { color: var(--orange); font-style: normal; }
   margin: 70px auto;
   padding: 40px 24px 80px;
 }
+.probe-back { margin-bottom: 36px; }
 .probe-page > h1 { margin: 16px 0; font-size: clamp(40px, 6vw, 62px); }
 .probe-page > p { color: #716b62; line-height: 1.7; }
 .probe-kicker, .section-label { color: var(--orange); font-size: 11px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
@@ -209,9 +210,17 @@ h1 em { color: var(--orange); font-style: normal; }
 .probe-item > span { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #c9c3b7; border-radius: 50%; font-size: 12px; }
 .probe-item.done > span { color: white; border-color: var(--green); background: var(--green); }
 .probe-item.active > span { color: var(--orange); border-color: var(--orange); }
+.probe-item.waiting { opacity: 1; }
+.probe-item.waiting > span { color: #8a641e; border-color: #d7ae62; background: #fff4d9; }
+.probe-item.error { opacity: 1; }
+.probe-item.error > span { color: #a63f2c; border-color: #c75a43; background: #fbe4de; }
 .probe-item strong { display: block; margin: 2px 0 5px; }
 .probe-item p { margin: 0; color: #827b71; font-size: 13px; }
 .spin { animation: spin 1s linear infinite; }
+.probe-retry { margin-top: 22px; padding: 12px 16px; border: 0; border-radius: 10px; color: white; background: var(--ink); font-weight: 700; }
+.probe-retry:disabled { cursor: wait; opacity: .58; }
+.handoff-error { margin: 12px 0 0; display: flex; align-items: flex-start; gap: 7px; color: #a63f2c !important; font-size: 12px; }
+.handoff-error svg { flex: none; margin-top: 2px; }
 .probe-privacy { margin-top: 24px; padding: 15px 17px; display: flex; align-items: center; gap: 9px; color: var(--green); background: rgba(49,92,76,.08); border-radius: 12px; font-size: 13px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -224,6 +233,8 @@ h1 em { color: var(--orange); font-style: normal; }
 .demo-badge { color: #a24725; background: #f9ddca; }
 .cache-banner { margin-top: 28px; padding: 14px 16px; display: flex; align-items: center; gap: 8px; border: 1px solid #ddd6c9; border-radius: 12px; background: rgba(255,255,255,.46); color: #716a60; font-size: 13px; }
 .cache-banner button { margin-left: auto; display: flex; align-items: center; gap: 6px; border: 0; color: var(--green); background: transparent; font-weight: 700; }
+.sample-notice { margin: -22px 0 22px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 9px; border: 1px solid #e0b66d; border-radius: 12px; color: #76521d; background: #fff4d9; font-size: 13px; line-height: 1.55; }
+.sample-notice svg { flex: 0 0 auto; margin-top: 2px; }
 
 .verdict-card { min-height: 264px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 40px; padding: 40px; color: white; background: var(--green); border-radius: 24px 24px 24px 6px; box-shadow: 0 20px 55px rgba(49,92,76,.2); }
 .verdict-card .section-label { color: #f6b58f; }

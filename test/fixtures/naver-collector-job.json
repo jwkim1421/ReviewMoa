@@ -1,0 +1,48 @@
+{
+  "product": {
+    "source": "naver",
+    "sourceLabel": "네이버",
+    "productId": "fixture-product-123",
+    "canonicalUrl": "https://smartstore.naver.com/reviewmoa-fixture/products/123",
+    "name": "fixture 무선 청소기"
+  },
+  "reviews": [
+    {
+      "id": "fixture-review-5",
+      "rating": 5,
+      "content": "배송이 빠르고 설치와 사용이 쉬워서 만족합니다.",
+      "createdAt": "2026-07-28T05:00:00.000Z",
+      "option": "화이트",
+      "classification": "included"
+    },
+    {
+      "id": "fixture-review-4",
+      "rating": 4,
+      "content": "가격 대비 품질이 좋고 사용하기 편합니다.",
+      "createdAt": "2026-07-27T04:00:00.000Z",
+      "option": "화이트",
+      "classification": "included"
+    },
+    {
+      "id": "fixture-review-3",
+      "rating": 3,
+      "content": "성능은 괜찮지만 상자가 조금 눌려서 왔습니다.",
+      "createdAt": "2026-07-26T03:00:00.000Z",
+      "classification": "uncertain"
+    },
+    {
+      "id": "fixture-review-2",
+      "rating": 2,
+      "content": "포장이 훼손되어 아쉽고 손잡이가 헐거워요.",
+      "createdAt": "2026-07-25T02:00:00.000Z",
+      "classification": "included"
+    },
+    {
+      "id": "fixture-review-sponsored",
+      "rating": 5,
+      "content": "제품을 제공받아 작성한 체험단 후기입니다.",
+      "createdAt": "2026-07-24T01:00:00.000Z",
+      "classification": "sponsored"
+    }
+  ]
+}

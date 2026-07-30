@@ -36,6 +36,22 @@ export async function hasCollectorExtension() {
   }
 }
 
+export async function startMobileHandoff(payload: {
+  jobId: string;
+  operatorToken: string;
+  url: string;
+}) {
+  const result = await extensionRequest<{ ok?: boolean; error?: string }>(
+    "REVIEWMOA_MOBILE_HANDOFF",
+    payload,
+    5_000,
+  );
+  if (!result?.ok) {
+    throw new Error(result?.error ?? "Safari 확장에서 상품 페이지를 열지 못했습니다.");
+  }
+  return result;
+}
+
 export async function collectWithExtension(
   product: ProductIdentity,
   onStatus: (status: ExtensionResult) => void,

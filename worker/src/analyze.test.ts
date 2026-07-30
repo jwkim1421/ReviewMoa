@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseAiPayload } from "./analyze";
+import { createReport, parseAiPayload } from "./analyze";
+import type { StoredReview } from "./types";
 
 describe("parseAiPayload", () => {
   it("parses the Responses API output_text shortcut", () => {
@@ -36,5 +37,22 @@ describe("parseAiPayload", () => {
     expect(parseAiPayload({
       output_text: JSON.stringify({ positive: "좋아요." }),
     })).toBeNull();
+  });
+});
+
+describe("createReport sample notice", () => {
+  it("warns about a small sample while preserving the organized reviews", () => {
+    const rows: StoredReview[] = [{
+      review_id: "review-1",
+      rating: 5,
+      content: "배송이 빠르고 사용하기 편해서 만족합니다.",
+      created_at: "2026-07-29",
+      option_name: "화이트",
+      classification: "included",
+    }];
+    const report = createReport("job-1", { name: "테스트 상품" }, rows);
+
+    expect(report.sampleNotice).toContain("정상 리뷰가 1개로 충분하지 않습니다.");
+    expect(report.ratings.find(({ rating }) => rating === 5)?.reviews).toHaveLength(1);
   });
 });

@@ -17,14 +17,15 @@ import {
   Star,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { ProductIdentity, Report, ReviewCapability } from "./domain/types";
+import type { JobSnapshot, JobStatus, ProductIdentity, Report } from "./domain/types";
 import { ProductUrlError, resolveProductInput } from "./domain/url";
-import { analyzeProduct, probeProduct } from "./lib/api";
-import { createLocalReport } from "./domain/analyze";
-import { collectWithExtension, hasCollectorExtension } from "./lib/extension";
+import { createJob, getJob, refreshJob } from "./lib/api";
+import { startMobileHandoff } from "./lib/extension";
 
 const sources = ["네이버", "쿠팡", "컬리", "오늘의집", "11번가", "SSG닷컴", "G마켓"];
 type View = "home" | "probing" | "report" | "ideas";
+const STORED_JOB_KEY = "reviewmoa.activeJobId";
+const operatorTokenKey = (jobId: string) => `reviewmoa.operatorToken.${jobId}`;
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -40,67 +41,91 @@ export function App() {
   const [url, setUrl] = useState("");
   const [view, setView] = useState<View>(() => window.location.hash === "#ideas" ? "ideas" : "home");
   const [product, setProduct] = useState<ProductIdentity>();
-  const [capability, setCapability] = useState<ReviewCapability>();
+  const [jobId, setJobId] = useState<string>();
+  const [job, setJob] = useState<JobSnapshot>();
   const [report, setReport] = useState<Report>();
   const [error, setError] = useState("");
-  const [probeStep, setProbeStep] = useState(0);
+  const [handoffStarting, setHandoffStarting] = useState(false);
+  const [handoffError, setHandoffError] = useState("");
 
   useEffect(() => {
-    if (view !== "probing") return;
-    const timer = window.setInterval(() => setProbeStep((value) => Math.min(value + 1, 2)), 550);
-    return () => window.clearInterval(timer);
-  }, [view]);
+    if (window.location.hash === "#ideas") return;
+    const urlJobId = new URL(window.location.href).searchParams.get("job");
+    const storedJobId = window.localStorage.getItem(STORED_JOB_KEY);
+    const restoredJobId = urlJobId || storedJobId;
+    if (!restoredJobId) return;
+    setJobId(restoredJobId);
+    setView("probing");
+  }, []);
 
-  async function collectAndAnalyze(resolved: ProductIdentity) {
-    const extensionInstalled = await hasCollectorExtension();
-    if (!extensionInstalled) {
-      throw new Error(
-        "실제 리뷰를 수집하려면 리뷰모아 Chrome/Edge 확장 프로그램을 먼저 설치해 주세요.",
-      );
+  useEffect(() => {
+    if (view !== "probing" || !jobId) return;
+    const activeJobId = jobId;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function poll() {
+      try {
+        const snapshot = await getJob(activeJobId);
+        if (cancelled) return;
+        setJob(snapshot);
+        setProduct(snapshot.product);
+        setError("");
+        if (snapshot.report && ["completed", "partial"].includes(snapshot.status)) {
+          setReport(snapshot.report);
+          setView("report");
+          return;
+        }
+        if (!["failed", "cancelled"].includes(snapshot.status)) {
+          timer = window.setTimeout(poll, 1_500);
+        }
+      } catch (caught) {
+        if (cancelled) return;
+        setError(caught instanceof Error ? caught.message : "작업 상태를 확인하지 못했습니다.");
+        timer = window.setTimeout(poll, 3_000);
+      }
     }
-    const collection = await collectWithExtension(resolved, (status) => {
-      setCapability((previous) => ({
-        status: status.status === "waiting_for_login" ? "login_required" : previous?.status ?? "partial",
-        hasReviewArea: previous?.hasReviewArea ?? true,
-        supportsNewestSort: previous?.supportsNewestSort ?? false,
-        supportsRatingFilter: previous?.supportsRatingFilter ?? false,
-        requiresLogin: status.status === "waiting_for_login",
-        message:
-          status.status === "waiting_for_login"
-            ? "상품 탭에서 로그인한 뒤 확장 프로그램의 ‘다시 확인’을 눌러 주세요."
-            : status.status === "waiting_for_user"
-              ? "상품 탭에서 리뷰 영역이나 CAPTCHA를 직접 확인해 주세요."
-              : status.message ?? "공개된 리뷰를 정리하고 있습니다.",
-      }));
-    });
-    return import.meta.env.VITE_API_BASE
-      ? analyzeProduct(resolved, collection.reviews)
-      : createLocalReport(
-          resolved,
-          collection.reviews ?? [],
-          collection.product?.name ?? "상품 리뷰 분석",
-        );
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [jobId, view]);
+
+  function rememberJob(id: string, operatorToken?: string) {
+    setJobId(id);
+    window.localStorage.setItem(STORED_JOB_KEY, id);
+    if (operatorToken) {
+      window.localStorage.setItem(operatorTokenKey(id), operatorToken);
+    }
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("job", id);
+    nextUrl.hash = "";
+    window.history.replaceState(null, "", nextUrl);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
+    setHandoffError("");
     try {
       const resolved = resolveProductInput(url);
       setProduct(resolved);
       setView("probing");
-      setProbeStep(0);
-      const result = await probeProduct(resolved);
-      setCapability(result.capability);
-      if (result.report) {
-        setReport(result.report);
+      setJob(undefined);
+      const created = await createJob(resolved);
+      rememberJob(created.id, created.operatorToken);
+      setJob({
+        id: created.id,
+        status: created.status,
+        product: created.product ?? resolved,
+        report: created.report,
+      });
+      if (created.report) {
+        setReport(created.report);
         setView("report");
-        return;
       }
-      setProbeStep(2);
-      const nextReport = await collectAndAnalyze(resolved);
-      setReport(nextReport);
-      setView("report");
     } catch (caught) {
       setError(caught instanceof ProductUrlError || caught instanceof Error ? caught.message : "URL을 확인하지 못했습니다.");
       setView("home");
@@ -108,14 +133,19 @@ export function App() {
   }
 
   async function refresh() {
-    if (!product) return;
+    if (!jobId) return;
     setError("");
     try {
       setView("probing");
-      setProbeStep(0);
-      const nextReport = await collectAndAnalyze(product);
-      setReport(nextReport);
-      setView("report");
+      setReport(undefined);
+      setJob(undefined);
+      const refreshed = await refreshJob(jobId);
+      rememberJob(refreshed.id, refreshed.operatorToken);
+      setJob({
+        id: refreshed.id,
+        status: refreshed.status,
+        product: refreshed.product ?? product!,
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "리뷰를 다시 수집하지 못했습니다.");
       setView("home");
@@ -123,13 +153,46 @@ export function App() {
   }
 
   function reset() {
-    if (window.location.hash) {
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    if (jobId) {
+      window.localStorage.removeItem(operatorTokenKey(jobId));
     }
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete("job");
+    nextUrl.hash = "";
+    window.history.replaceState(null, "", nextUrl);
+    window.localStorage.removeItem(STORED_JOB_KEY);
+    setJobId(undefined);
+    setJob(undefined);
     setView("home");
     setReport(undefined);
-    setCapability(undefined);
     setError("");
+    setHandoffError("");
+  }
+
+  async function startIphoneHandoff() {
+    if (!jobId || !product) return;
+    const operatorToken = window.localStorage.getItem(operatorTokenKey(jobId));
+    if (!operatorToken) {
+      setError("이 기기에 보안 확인 인계 정보가 없습니다. 같은 iPhone에서 새로 요청해 주세요.");
+      return;
+    }
+    setHandoffStarting(true);
+    setHandoffError("");
+    try {
+      await startMobileHandoff({
+        jobId,
+        operatorToken,
+        url: product.canonicalUrl,
+      });
+    } catch (caught) {
+      setHandoffError(
+        caught instanceof Error && caught.message !== "EXTENSION_NOT_AVAILABLE"
+          ? caught.message
+          : "리뷰모아 Safari 확장을 설치하고 이 웹사이트에 대한 접근을 허용해 주세요.",
+      );
+    } finally {
+      setHandoffStarting(false);
+    }
   }
 
   function showIdeas() {
@@ -141,7 +204,17 @@ export function App() {
     <main>
       <Nav onHome={reset} onIdeas={showIdeas} ideasActive={view === "ideas"} />
       {view === "home" && <Home url={url} setUrl={setUrl} onSubmit={submit} error={error} />}
-      {view === "probing" && product && <Probe product={product} step={probeStep} capability={capability} />}
+      {view === "probing" && (
+        <Probe
+          product={product}
+          job={job}
+          pollingError={error}
+          handoffError={handoffError}
+          handoffStarting={handoffStarting}
+          onMobileHandoff={startIphoneHandoff}
+          onBack={reset}
+        />
+      )}
       {view === "report" && report && <ReportView report={report} onRefresh={refresh} onBack={reset} />}
       {view === "ideas" && <IdeasPage onBack={reset} />}
     </main>
@@ -202,10 +275,7 @@ function Home({
         </form>
         {error ? <p className="form-error"><AlertTriangle size={14} /> {error}</p> : (
           <p className="search-note">
-            <ShieldCheck size={14} /> 먼저 리뷰 접근 가능 여부를 확인하며, 로그인 정보는 저장하지 않습니다.
-            <a href="https://github.com/jwkim1421/ReviewMoa/tree/master/extension" target="_blank" rel="noreferrer">
-              확장 프로그램 설치 안내
-            </a>
+            <ShieldCheck size={14} /> 집의 중앙 수집 서버가 작업을 처리하며, 사용자 기기에 확장 프로그램을 설치하지 않습니다.
           </p>
         )}
       </section>
@@ -325,26 +395,123 @@ function IdeasPage({ onBack }: { onBack: () => void }) {
   );
 }
 
-function Probe({ product, step, capability }: { product: ProductIdentity; step: number; capability?: ReviewCapability }) {
+function statusMessage(status: JobStatus, job?: JobSnapshot) {
+  if (job?.progress?.message) return job.progress.message;
+  const messages: Record<JobStatus, string> = {
+    queued: "중앙 수집 서버가 작업을 가져가기를 기다리고 있어요.",
+    probing: "상품 페이지와 리뷰 영역을 확인하고 있어요.",
+    collecting: job?.progress?.accepted
+      ? `정상 리뷰 ${job.progress.accepted}개를 모았어요.`
+      : "공개된 최신 리뷰를 별점별로 수집하고 있어요.",
+    filtering: "의심 신호와 중복 리뷰를 분리하고 있어요.",
+    analyzing: "수집한 리뷰를 바탕으로 구매 인사이트를 만들고 있어요.",
+    waiting_for_operator: ["captcha", "login_required", "operator_required"].includes(
+      job?.interruptionReason ?? "",
+    )
+      ? "이 iPhone의 Safari에서 보안 확인을 완료하면 리뷰 수집을 이어갈 수 있어요."
+      : "추가 접근 확인이 필요해 작업을 잠시 멈췄어요.",
+    waiting_for_login: "운영자 로그인이 필요해 작업을 잠시 멈췄어요.",
+    waiting_for_user: "추가 확인이 필요해 작업을 잠시 멈췄어요.",
+    completed: "리뷰 보고서가 완성됐어요.",
+    partial: "확인할 수 있는 리뷰로 보고서를 준비했어요.",
+    failed: "이번에는 리뷰를 안전하게 수집하지 못했어요.",
+    cancelled: "작업이 취소됐어요.",
+  };
+  return messages[status];
+}
+
+function statusStep(status: JobStatus) {
+  if (["queued"].includes(status)) return 0;
+  if ([
+    "probing",
+    "collecting",
+    "filtering",
+    "waiting_for_operator",
+    "waiting_for_login",
+    "waiting_for_user",
+  ].includes(status)) return 1;
+  return 2;
+}
+
+function Probe({
+  product,
+  job,
+  pollingError,
+  handoffError,
+  handoffStarting,
+  onMobileHandoff,
+  onBack,
+}: {
+  product?: ProductIdentity;
+  job?: JobSnapshot;
+  pollingError: string;
+  handoffError: string;
+  handoffStarting: boolean;
+  onMobileHandoff: () => void;
+  onBack: () => void;
+}) {
+  const status = job?.status ?? "queued";
+  const step = statusStep(status);
+  const stopped = ["failed", "cancelled"].includes(status);
+  const waiting = ["waiting_for_operator", "waiting_for_login", "waiting_for_user"].includes(status);
+  const message = pollingError || statusMessage(status, job);
   const items = [
-    { title: "상품 주소 확인", detail: `${product.sourceLabel} · ${product.productId}` },
-    { title: "리뷰 영역 탐색", detail: "리뷰 탭과 최신순 정렬을 확인합니다." },
-    { title: "별점별 리뷰 준비", detail: capability?.message ?? "수집 가능한 범위를 계산합니다." },
+    {
+      title: "수집 작업 대기",
+      detail: product ? `${product.sourceLabel} · ${product.productId}` : "저장된 작업 정보를 불러오고 있어요.",
+    },
+    { title: "상품과 리뷰 수집", detail: message },
+    { title: "분석과 보고서 준비", detail: "정상 리뷰를 바탕으로 구매 인사이트를 정리합니다." },
   ];
   return (
     <section className="probe-page">
-      <div className="probe-kicker">REVIEW CHECK</div>
-      <h1>리뷰를 읽을 수 있는지<br />먼저 확인하고 있어요.</h1>
-      <p>접근 실패를 리뷰 0개로 표시하지 않도록 수집 전에 상품과 리뷰 영역을 검증합니다.</p>
+      <button className="text-button probe-back" onClick={onBack}><ArrowLeft size={16} /> 다른 상품 확인</button>
+      <div className="probe-kicker">{waiting ? "OPERATOR CHECK" : stopped ? "COLLECTION STOPPED" : "CENTRAL COLLECTOR"}</div>
+      <h1>
+        {waiting
+          ? <>보안 확인 후<br />이어서 수집할게요.</>
+          : stopped
+            ? <>리뷰를 안전하게<br />가져오지 못했어요.</>
+            : <>중앙 수집 서버가<br />리뷰를 확인하고 있어요.</>}
+      </h1>
+      <p>{message}</p>
       <div className="probe-list">
         {items.map((item, index) => (
-          <div className={`probe-item ${index < step ? "done" : index === step ? "active" : ""}`} key={item.title}>
-            <span>{index < step ? <Check size={18} /> : index === step ? <LoaderCircle className="spin" size={18} /> : index + 1}</span>
+          <div
+            className={`probe-item ${index < step ? "done" : index === step ? stopped ? "error" : waiting ? "waiting" : "active" : ""}`}
+            key={item.title}
+          >
+            <span>
+              {index < step
+                ? <Check size={18} />
+                : index === step
+                  ? stopped
+                    ? <AlertTriangle size={17} />
+                    : waiting
+                      ? <Clock3 size={17} />
+                      : <LoaderCircle className="spin" size={18} />
+                  : index + 1}
+            </span>
             <div><strong>{item.title}</strong><p>{item.detail}</p></div>
           </div>
         ))}
       </div>
-      <div className="probe-privacy"><ShieldCheck size={17} /> 로그인이나 CAPTCHA가 필요하면 작업을 멈추고 직접 완료한 뒤 이어갈 수 있어요.</div>
+      {status === "waiting_for_operator" &&
+        ["captcha", "login_required", "operator_required"].includes(job?.interruptionReason ?? "") && (
+          <>
+            <button className="probe-retry" onClick={onMobileHandoff} disabled={handoffStarting}>
+              {handoffStarting ? "Safari 확장을 여는 중…" : "이 iPhone에서 보안 확인하기"}
+            </button>
+            {handoffError && (
+              <p className="handoff-error"><AlertTriangle size={15} /> {handoffError}</p>
+            )}
+          </>
+        )}
+      {stopped && <button className="probe-retry" onClick={onBack}>새 상품 URL로 다시 요청하기</button>}
+      <div className="probe-privacy">
+        <ShieldCheck size={17} />
+        화면을 닫아도 작업 ID를 저장해 두었다가 다음 방문에 상태를 복원합니다.
+      </div>
     </section>
   );
 }
@@ -353,6 +520,13 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
   const [openRating, setOpenRating] = useState<number | null>(null);
   const confidenceLabel = report.confidence >= 80 ? "높음" : report.confidence >= 60 ? "보통" : "낮음";
   const totalIncluded = useMemo(() => report.ratings.reduce((sum, item) => sum + item.included, 0), [report]);
+  const sampleNotice = report.sampleNotice ?? (
+    totalIncluded < 50
+      ? totalIncluded
+        ? `정상 리뷰가 ${totalIncluded}개로 충분하지 않습니다. 아래 내용은 확인된 리뷰만 기준으로 정리했으니 참고용으로 봐 주세요.`
+        : "정상 리뷰가 확인되지 않아 충분한 판단 근거가 없습니다. 확인 가능한 정보만 정리했으니 참고용으로 봐 주세요."
+      : undefined
+  );
   const analysis = report.analysis ?? {
     positive: report.strengths[0]
       ? `${report.strengths[0].label}에 대한 만족이 반복적으로 확인됐어요.`
@@ -379,6 +553,13 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
           <button onClick={onRefresh}><RefreshCw size={14} /> 다시 불러오기</button>
         </div>
       </header>
+
+      {sampleNotice && (
+        <p className="sample-notice">
+          <AlertTriangle size={17} />
+          <span>{sampleNotice}</span>
+        </p>
+      )}
 
       <section className="verdict-card">
         <div className="verdict-copy">

@@ -1,6 +1,7 @@
 const COMMON_REVIEW_SELECTORS = [
   "[data-review-id]",
   "[data-review-no]",
+  "[data-shp-contents-type='review']",
   "[class*='review-item']",
   "[class*='ReviewItem']",
   "[class*='review_list'] > li",
@@ -17,11 +18,13 @@ const MAX_INCLUDED_PER_RATING = 100;
 const MAX_SCANNED_PER_RATING = 300;
 const MAX_SCANNED_WITHOUT_FILTER = 3000;
 const MAX_PAGE_ATTEMPTS = 40;
+let operatorWatchTimer;
+let activeCollection;
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "REVIEWMOA_PROBE_AND_COLLECT") return;
-    collect(message.job)
+    runCollection(message.job)
       .then(async (result) => {
         await chrome.runtime.sendMessage({ type: "REVIEWMOA_COLLECTION_RESULT", payload: result });
         sendResponse(result);
@@ -33,6 +36,69 @@ if (globalThis.chrome?.runtime?.onMessage) {
       });
     return true;
   });
+}
+
+function runCollection(job) {
+  if (activeCollection) return activeCollection;
+  activeCollection = collect(job)
+    .then((result) => {
+      if (
+        job.mode === "mobile-handoff" &&
+        ["waiting_for_login", "waiting_for_user"].includes(result.status) &&
+        ["captcha", "login_required", "access_limited", "review_area_not_found"].includes(
+          result.reason,
+        )
+      ) {
+        watchForOperatorCompletion(job, result.reason);
+      }
+      return result;
+    })
+    .finally(() => {
+      activeCollection = null;
+    });
+  return activeCollection;
+}
+
+function watchForOperatorCompletion(job, reason) {
+  if (operatorWatchTimer) clearInterval(operatorWatchTimer);
+  let clearChecks = 0;
+  operatorWatchTimer = setInterval(() => {
+    if (detectInterruption()) {
+      clearChecks = 0;
+      return;
+    }
+    const text = document.body?.innerText?.slice(0, 12_000) ?? "";
+    const productReady = reason === "review_area_not_found"
+      ? findReviewNodes(globalThis.REVIEWMOA_GET_SITE_CONFIG?.()).length > 0
+      : allowedNaverProductPage(location.href) &&
+        /리뷰|상세정보|상품정보|판매자정보/.test(text) &&
+        !/시스템\s*오류|에러페이지/.test(`${document.title} ${text}`);
+    clearChecks = productReady ? clearChecks + 1 : 0;
+    if (clearChecks < 2 || activeCollection) return;
+    clearInterval(operatorWatchTimer);
+    operatorWatchTimer = undefined;
+    void runCollection(job).then((result) =>
+      chrome.runtime.sendMessage({
+        type: "REVIEWMOA_COLLECTION_RESULT",
+        payload: result,
+      })
+    );
+  }, 1_500);
+}
+
+function allowedNaverProductPage(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      /\/(?:products|catalog)\/\d+/.test(url.pathname) &&
+      (
+        url.hostname === "smartstore.naver.com" ||
+        url.hostname === "brand.naver.com" ||
+        url.hostname.endsWith(".shopping.naver.com")
+      );
+  } catch {
+    return false;
+  }
 }
 
 async function collect(job) {
@@ -131,13 +197,22 @@ async function collect(job) {
       reviews,
     };
   }
+  const visibleReviewNodes = findReviewNodes(config);
+  const summaryOnly =
+    visibleReviewNodes.length > 0 &&
+    visibleReviewNodes.every((node) =>
+      node.getAttribute("data-shp-area") === "sprvsub.topreview"
+    );
   return {
     jobId: job.id,
-    status: "completed",
+    status: summaryOnly ? "partial" : "completed",
     reason: confirmedEmpty ? "confirmed_zero_reviews" : "collection_completed",
+    partialReason: summaryOnly ? "summary_only" : undefined,
     message: confirmedEmpty
       ? "정상적으로 확인한 결과 등록된 리뷰가 없습니다."
-      : `최신 리뷰 ${reviews.length}개를 수집했습니다.`,
+      : summaryOnly
+        ? `상품 페이지에 공개된 대표 리뷰 ${reviews.length}개를 수집했습니다.`
+        : `최신 리뷰 ${reviews.length}개를 수집했습니다.`,
     product,
     capability,
     reviews,
@@ -194,6 +269,7 @@ function readVisibleReviews(config, options) {
     const sourceId =
       node.getAttribute("data-review-id") ||
       node.getAttribute("data-review-no") ||
+      node.getAttribute("data-shp-contents-id") ||
       node.id;
     const key = sourceId || `${rating}:${createdAt || ""}:${hashText(content)}`;
     if (options.seenKeys.has(key)) continue;
@@ -413,8 +489,11 @@ function probeReviews(config) {
 }
 
 function detectInterruption() {
-  const text = document.body?.innerText?.slice(0, 12000) ?? "";
-  if (/captcha|자동입력|보안문자|로봇이 아닙니다/i.test(text)) {
+  const text = (document.body?.innerText || document.body?.textContent || "").slice(0, 12000);
+  if (
+    /captcha|자동입력|보안문자|로봇이 아닙니다|보안 확인을 완료|실제 사용자임을 확인|빈 칸을 채워주세요/i
+      .test(text)
+  ) {
     return { status: "waiting_for_user", reason: "captcha", message: "CAPTCHA를 직접 완료한 뒤 다시 확인해 주세요." };
   }
   if (/로그인 후|로그인이 필요|login required/i.test(text) && !findReviewNodes().length) {
@@ -480,9 +559,14 @@ function extractRating(node) {
         element.textContent,
       ].filter(Boolean).join(" ")
     ),
+    node.textContent,
   ].filter(Boolean).join(" ");
-  const match = text.match(/(?:별점|평점|별)?\s*([1-5](?:\.\d)?)\s*(?:점|\/\s*5|개)/);
-  if (match) return Math.max(1, Math.min(5, Math.round(Number(match[1]))));
+  const match = text.match(
+    /(?:별점|평점|별)\s*([1-5](?:\.\d)?)(?:\s*점)?|[★⭐]\s*([1-5](?:\.\d)?)|([1-5](?:\.\d)?)\s*(?:점|\/\s*5|개)/,
+  );
+  if (match) {
+    return Math.max(1, Math.min(5, Math.round(Number(match[1] ?? match[2] ?? match[3]))));
+  }
 
   const filledStars = node.querySelectorAll(
     "[class*='star'][class*='fill'], [class*='star'][class*='active'], [aria-label='채운 별']",
@@ -494,6 +578,10 @@ function extractDate(node) {
   const text = node.textContent || "";
   const absolute = text.match(/20\d{2}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}/);
   if (absolute) return absolute[0].replace(/[.\s]/g, "-").replace(/-+$/, "");
+  const short = text.match(/(?:^|\s)(\d{2})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})(?:\.|\s|$)/);
+  if (short) {
+    return `20${short[1]}-${short[2].padStart(2, "0")}-${short[3].padStart(2, "0")}`;
+  }
   const relative = text.match(/(\d+)\s*(일|시간|분)\s*전/);
   if (!relative) return undefined;
   const amount = Number(relative[1]);
@@ -545,6 +633,7 @@ function wait(milliseconds) {
 }
 
 globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
+  detectInterruption,
   extractContent,
   extractRating,
   extractDate,

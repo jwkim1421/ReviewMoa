@@ -24,6 +24,11 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
     .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
     .slice(0, 3000);
   const included = rows.filter((review) => ["included", "uncertain"].includes(review.classification));
+  const sampleNotice = included.length < 50
+    ? included.length
+      ? `정상 리뷰가 ${included.length}개로 충분하지 않습니다. 아래 내용은 확인된 리뷰만 기준으로 정리했으니 참고용으로 봐 주세요.`
+      : "정상 리뷰가 확인되지 않아 충분한 판단 근거가 없습니다. 확인 가능한 정보만 정리했으니 참고용으로 봐 주세요."
+    : undefined;
   const strengths = aspects(included, POSITIVE);
   const cautions = aspects(included, CAUTION);
   const now = new Date();
@@ -74,6 +79,7 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
     analysisProvider: "rules",
     confidence,
     confidenceReasons: [`별점별 정상 리뷰 ${included.length}개 반영`, `의심 신호 ${excluded}개 제외`],
+    sampleNotice,
     strengths,
     cautions,
     anomalyCounts,

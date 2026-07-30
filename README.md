@@ -14,6 +14,11 @@
 - 별점별 최대 100개 분석과 대표 원문 10개
 - OpenRouter 또는 규칙 기반의 좋은 점·아쉬운 점·결론 3문장 분석
 - Cloudflare Worker API, D1 마이그레이션, 7일/30일 만료 캐시
+- 인증된 중앙 collector 작업 대기열, lease, heartbeat와 상태 전이
+- macOS Chrome persistent profile을 사용하는 중앙 collector 최소 프로세스
+- 웹 작업 생성, 상태 폴링, 작업 ID 복원과 상태별 진행 화면
+- 정상 리뷰 50개 미만일 때 표본 부족 안내를 표시하면서 확인된 리뷰는 계속 정리
+- iPhone Safari에서 보안 확인 후 같은 세션으로 리뷰 수집을 이어받는 모바일 인계
 - OpenRouter 키가 있을 때 무료 모델 라우터로 AI 분석 보강
 - GitHub Pages 및 Cloudflare Worker 배포 워크플로
 
@@ -42,6 +47,25 @@ npm run dev
 표시하지 않는다. 자동 탐색이 실패하면 사용자가 리뷰 탭이나 필터를 직접 연 뒤
 확장 프로그램의 `현재 페이지에서 다시 확인`으로 재개한다.
 
+### 중앙 collector
+
+중앙 collector는 최종 사용자의 확장 프로그램 대신 집의 macOS PC에서 Worker
+대기열을 처리한다. 환경변수와 현재 구현 범위는
+[`collector/README.md`](collector/README.md)를 참고한다.
+
+```bash
+npm run collector:start
+```
+
+현재 네이버 adapter와 fixture 검증까지 구현했다. 브랜드 상품에서 전체 리뷰 목록을
+열지 못해도 공개된 대표 리뷰는 `partial` 보고서로 정리하며, 실제 상품 최소 10개
+수동 대조 전까지는 비공개 개발 상태로 유지한다.
+
+iPhone Safari Web Extension 원본과 모바일 인계 API도 구현되어 있다. Xcode 프로젝트
+생성과 시뮬레이터 빌드까지 검증했으며, 무료 Personal Team으로 개인 iPhone 설치
+테스트를 진행할 수 있다. TestFlight와 App Store 배포에는 Apple Developer Program이
+필요하다. 자세한 절차는 [`safari/README.md`](safari/README.md)에 있다.
+
 ## Cloudflare API 배포
 
 1. D1 데이터베이스를 만든다.
@@ -55,10 +79,13 @@ npx wrangler d1 create reviewmoa
 
 ```bash
 npx wrangler secret put OPENROUTER_API_KEY --config worker/wrangler.toml
+npx wrangler secret put COLLECTOR_TOKEN --config worker/wrangler.toml
 ```
 
 기본 모델은 무료 모델 중 요청 기능을 지원하는 모델을 고르는 `openrouter/free`다.
 OpenRouter 호출이 실패하거나 한도에 도달하면 규칙 기반 분석 결과를 유지한다.
+`COLLECTOR_TOKEN`은 중앙 수집기의 claim과 heartbeat 요청을 인증하며, 프런트 번들이나
+저장소 파일에는 넣지 않는다.
 
 4. 마이그레이션과 Worker를 배포한다.
 

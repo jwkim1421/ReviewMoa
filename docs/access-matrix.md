@@ -5,7 +5,7 @@
 
 | 쇼핑몰 | 구현 상태 | 최신순 | 별점 필터 | 로그인 재개 | 실제 검증 |
 |---|---|---:|---:|---:|---|
-| 네이버 | 자동 탐색 후보 구현 | 검증 필요 | 검증 필요 | 구현 | 대기 |
+| 네이버 | 브랜드 adapter 후보 구현 | 검증 필요 | 검증 필요 | 구현 | 6/10 확인 |
 | 쿠팡 | 자동 탐색 후보 구현 | 검증 필요 | 검증 필요 | 구현 | 대기 |
 | 컬리 | 자동 탐색 후보 구현 | 검증 필요 | 검증 필요 | 구현 | 대기 |
 | 오늘의집 | 자동 탐색 후보 구현 | 검증 필요 | 검증 필요 | 구현 | 대기 |
@@ -23,3 +23,49 @@
 6. 각 사이트 최소 10개 상품에서 오수집이 없을 때만 `verified`로 전환한다.
 
 CAPTCHA 풀이 자동화, 접근 제한 회피, 프록시·계정 순환은 검증 방법에 포함하지 않는다.
+
+## 네이버 canary 기록
+
+### 2026-07-29
+
+- `brand.naver.com/baseus/products/11664146541`
+  - 일반 Chrome에서 정상 표시
+  - collector 전용 Chrome에서도 접근 제한과 CAPTCHA 없음
+  - `data-shp-contents-type="review"`와 고유 `data-shp-contents-id` 확인
+  - 상단 대표 리뷰 12개의 별점·본문·ID 추출 성공
+  - 전체 6,003건 목록은 자동으로 열리지 않아 `summary_only`로 표시
+  - 공개된 대표 리뷰 12개는 버리지 않고 정리하되 작업 상태는 `partial`로 처리
+  - 보고서에 전체 목록을 열지 못했다는 제한과 리뷰 수가 충분하지 않다는 안내를 표시
+- `search.shopping.naver.com/catalog/53509411418`
+  - 일반 Chrome에서 정상 표시
+  - collector 전용 Chrome에서는 첫 접근에 `access_blocked`
+  - 추가 재시도와 우회 없이 즉시 중단
+
+현재 결과는 네이버 전체가 차단된 것이 아니라 호스트와 페이지 유형에 따라 접근성이
+다름을 보여준다. 10개 검증은 브랜드/스마트스토어 상세와 가격비교 카탈로그를 분리해
+기록한다.
+
+### 2026-07-29 추가 검증
+
+- `brand.naver.com/onnuristore/products/11962317805` (판토모나)
+  - collector Chrome에서 CAPTCHA와 접근 제한 없음
+  - 상단 대표 리뷰 12개 추출: 5점 9개, 4점 3개
+  - 전체 목록은 열리지 않아 `summary_only` 및 `partial` 대상
+- `smartstore.naver.com/hiwell/products/5038692181` (하이웰 초유)
+  - 네이버가 `[에러] 에러페이지 - 시스템오류`를 반환
+  - 사용자 일반 Chrome에서는 리뷰 4,994개가 표시됨
+  - 수정 후 `review_area_not_found`가 아닌 `operator_required`로 중단하는 것 확인
+- `search.shopping.naver.com/catalog/40669491206` (이유식 스푼)
+  - 첫 접근에 `access_blocked` 감지
+  - 추가 재시도와 우회 없이 즉시 중단
+- `smartstore.naver.com/shoma/products/11394857542` (외장하드)
+  - 하이웰 상품과 동일한 네이버 시스템 오류 페이지 반환
+  - 사용자 일반 Chrome에서는 리뷰 3,813개가 표시됨
+  - 시스템 오류는 리뷰 없음으로 처리하지 않고 iPhone Safari 인계 대상으로 분류
+- `xexymix.com/shop/shopbrand.html` (무릎 보호대)
+  - 네이버 상품 상세가 아닌 외부 쇼핑몰 카테고리 URL
+  - 현재 네이버 canary 허용 범위에서 브라우저 접근 전에 정상 거부
+  - 향후 제시믹스 전용 adapter와 개별 상품 상세 URL이 필요
+
+네이버 최소 10개 검증에는 외부 제시믹스 카테고리를 제외하고 현재까지 6개 상품을
+반영한다.

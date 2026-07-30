@@ -22,6 +22,9 @@ describe("createLocalReport", () => {
     expect(report.ratings.find((item) => item.rating === 5)?.included).toBe(1);
     expect(report.ratings.find((item) => item.rating === 5)?.excluded).toBe(1);
     expect(report.anomalyCounts.sponsored).toBe(1);
+    expect(report.sampleNotice).toBe(
+      "정상 리뷰가 2개로 충분하지 않습니다. 아래 내용은 확인된 리뷰만 기준으로 정리했으니 참고용으로 봐 주세요.",
+    );
   });
 
   it("reports an empty rating bucket as zero", () => {
@@ -31,6 +34,7 @@ describe("createLocalReport", () => {
       included: 0,
       reviews: [],
     });
+    expect(report.sampleNotice).toContain("정상 리뷰가 확인되지 않아");
   });
 
   it("keeps at most ten representative originals", () => {

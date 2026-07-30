@@ -8,11 +8,17 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "worker:check": "tsc -p worker/tsconfig.json --noEmit",
-    "check": "npm test && npm run build && npm run worker:check"
+    "collector:build": "tsc -p collector/tsconfig.json",
+    "collector:canary": "npm run collector:build && node collector/dist/canary.js",
+    "collector:start": "npm run collector:build && node --env-file-if-exists=.env.collector collector/dist/index.js",
+    "safari:prepare": "node scripts/prepare-safari-extension.mjs",
+    "safari:package": "npm run safari:prepare && xcrun safari-web-extension-packager safari/package --project-location safari/generated --app-name ReviewMoa --bundle-identifier kr.reviewmoa.ReviewMoa --swift --ios-only --copy-resources --no-open --no-prompt --force",
+    "check": "npm test && npm run build && npm run worker:check && npm run collector:build"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.7.0",
     "lucide-react": "^0.468.0",
+    "playwright-core": "^1.62.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "typescript": "^5.9.3",
@@ -21,6 +27,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260727.1",
     "@types/chrome": "^0.1.28",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "jsdom": "^26.1.0",

@@ -19,6 +19,7 @@ export type JobStatus =
   | "probing"
   | "waiting_for_login"
   | "waiting_for_user"
+  | "waiting_for_operator"
   | "collecting"
   | "filtering"
   | "queued"
@@ -27,6 +28,28 @@ export type JobStatus =
   | "partial"
   | "failed"
   | "cancelled";
+
+export interface JobProgress {
+  stage?: string;
+  rating?: number;
+  checked?: number;
+  accepted?: number;
+  message?: string;
+}
+
+export interface JobSnapshot {
+  id: string;
+  status: JobStatus;
+  product: ProductIdentity;
+  progress?: JobProgress;
+  interruptionReason?: string | null;
+  errorCode?: string | null;
+  requestedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  updatedAt?: string;
+  report?: Report;
+}
 
 export type ReviewClassification =
   | "included"
@@ -87,6 +110,7 @@ export interface Report {
   analysisProvider?: "openrouter" | "openai" | "rules";
   confidence: number;
   confidenceReasons: string[];
+  sampleNotice?: string;
   strengths: Array<{ label: string; mentions: number; ratio: number }>;
   cautions: Array<{ label: string; mentions: number; ratio: number }>;
   anomalyCounts: Record<Exclude<ReviewClassification, "included">, number>;

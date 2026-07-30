@@ -1,59 +1,56 @@
-import { createLocalReport } from "../domain/analyze";
-import type { ProductIdentity, RawReview, Report, ReviewCapability } from "../domain/types";
+import type {
+  JobSnapshot,
+  JobStatus,
+  ProductIdentity,
+  Report,
+} from "../domain/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE?.replace(/\/$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  if (!API_BASE) throw new Error("API_NOT_CONFIGURED");
+  if (!API_BASE) {
+    throw new Error("중앙 수집 API가 설정되지 않았습니다.");
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
+    },
   });
-  if (!response.ok) throw new Error((await response.text()) || "요청에 실패했습니다.");
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    if (payload?.error === "JOB_NOT_FOUND") {
+      throw new Error("저장된 작업을 찾지 못했습니다. 새로 요청해 주세요.");
+    }
+    throw new Error(payload?.error ?? "요청에 실패했습니다.");
+  }
   return response.json() as Promise<T>;
 }
 
-export async function probeProduct(product: ProductIdentity): Promise<{
-  capability: ReviewCapability;
+export interface CreateJobResult {
+  id: string;
+  status: JobStatus;
+  operatorToken?: string;
+  product?: ProductIdentity;
   report?: Report;
-}> {
-  if (!API_BASE) {
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    return {
-      capability: {
-        status: "partial",
-        hasReviewArea: false,
-        supportsNewestSort: false,
-        supportsRatingFilter: false,
-        requiresLogin: false,
-        message: `${product.sourceLabel} 상품 URL 형식을 확인했습니다. 확장 프로그램에서 리뷰 영역을 검증합니다.`,
-      },
-    };
-  }
-  return request("/v1/jobs/probe", {
+  cached?: boolean;
+  deduplicated?: boolean;
+}
+
+export function createJob(product: ProductIdentity) {
+  return request<CreateJobResult>("/v1/jobs", {
     method: "POST",
     body: JSON.stringify({ product }),
   });
 }
 
-export async function analyzeProduct(product: ProductIdentity, reviews?: RawReview[]): Promise<Report> {
-  if (!API_BASE) {
-    if (!reviews) throw new Error("REVIEW_COLLECTION_REQUIRED");
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    return createLocalReport(product, reviews, "상품 리뷰 분석");
-  }
-  if (!reviews) throw new Error("REVIEW_COLLECTION_REQUIRED");
-  const job = await request<{ id: string }>("/v1/jobs", {
+export function getJob(jobId: string) {
+  return request<JobSnapshot>(`/v1/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function refreshJob(jobId: string) {
+  return request<CreateJobResult>(`/v1/jobs/${encodeURIComponent(jobId)}/refresh`, {
     method: "POST",
-    body: JSON.stringify({ product }),
   });
-  if (reviews.length) {
-    for (let index = 0; index < reviews.length; index += 100) {
-      await request(`/v1/jobs/${job.id}/reviews`, {
-        method: "POST",
-        body: JSON.stringify({ reviews: reviews.slice(index, index + 100) }),
-      });
-    }
-  }
-  return request(`/v1/jobs/${job.id}/complete`, { method: "POST" });
 }

@@ -11,7 +11,8 @@
     "https://*.ohou.se/*",
     "https://*.11st.co.kr/*",
     "https://*.ssg.com/*",
-    "https://*.gmarket.co.kr/*"
+    "https://*.gmarket.co.kr/*",
+    "https://reviewmoa-api.reviewmoa.workers.dev/*"
   ],
   "background": {
     "service_worker": "background.js",
