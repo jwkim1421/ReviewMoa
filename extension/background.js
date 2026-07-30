@@ -57,10 +57,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return chrome.storage.local.set({ [RESULT_KEY]: result, [ACTIVE_KEY]: activeJob });
     }).then(() => {
       sendResponse({ ok: true });
+    }).catch((error) => {
+      sendResponse({ ok: false, error: error.message });
     });
     return true;
   }
 });
+
+function compactResult(result) {
+  const { reviews, ...summary } = result;
+  return {
+    ...summary,
+    reviewCount: Array.isArray(reviews) ? reviews.length : 0,
+  };
+}
 
 function allowedProductUrl(value) {
   try {
@@ -94,13 +104,15 @@ async function startMobileHandoff(payload) {
     status: "opening",
     createdAt: new Date().toISOString(),
   };
+  await chrome.storage.local.remove(RESULT_KEY);
   const tab = await chrome.tabs.create({ url: payload.url, active: true });
   job.tabId = tab.id;
-  await chrome.storage.local.set({ [ACTIVE_KEY]: job, [RESULT_KEY]: null });
+  await chrome.storage.local.set({ [ACTIVE_KEY]: job });
   return { ok: true };
 }
 
 async function handleMobileCollectionResult(job, result) {
+  const storedResult = compactResult(result);
   if (!["completed", "partial"].includes(result.status)) {
     return chrome.storage.local.set({
       [ACTIVE_KEY]: {
@@ -109,7 +121,7 @@ async function handleMobileCollectionResult(job, result) {
         reason: result.reason,
         message: result.message,
       },
-      [RESULT_KEY]: result,
+      [RESULT_KEY]: storedResult,
     });
   }
 
@@ -135,13 +147,13 @@ async function handleMobileCollectionResult(job, result) {
         reason: payload.error ?? "mobile_upload_failed",
         message: "리뷰 전송에 실패했습니다. 리뷰모아 화면에서 다시 시도해 주세요.",
       },
-      [RESULT_KEY]: result,
+      [RESULT_KEY]: storedResult,
     });
   }
   return chrome.storage.local.set({
     [ACTIVE_KEY]: null,
     [RESULT_KEY]: {
-      ...result,
+      ...storedResult,
       status: payload.status,
       uploadedAt: new Date().toISOString(),
     },

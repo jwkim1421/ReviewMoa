@@ -31,6 +31,10 @@ beforeAll(async () => {
         async set(values: Record<string, unknown>) {
           Object.assign(storage, values);
         },
+        async remove(keys: string | string[]) {
+          const names = Array.isArray(keys) ? keys : [keys];
+          names.forEach((name) => delete storage[name]);
+        },
       },
     },
     tabs: {
@@ -62,6 +66,10 @@ function sendMessage(message: Record<string, unknown>) {
 describe("mobile Safari handoff background flow", () => {
   it("keeps the operator token in extension storage and omits it from the content script", async () => {
     const operatorToken = "a".repeat(64);
+    storage["reviewmoa.lastResult"] = {
+      status: "failed",
+      reviews: [{ content: "이전 수집 결과" }],
+    };
     await expect(sendMessage({
       type: "REVIEWMOA_MOBILE_HANDOFF",
       payload: {
@@ -81,6 +89,7 @@ describe("mobile Safari handoff background flow", () => {
       mode: "mobile-handoff",
       tabId: 17,
     });
+    expect(storage).not.toHaveProperty("reviewmoa.lastResult");
 
     await updatedListener(17, { status: "complete" });
     expect(sendTabMessage).toHaveBeenCalledWith(17, {
@@ -131,5 +140,10 @@ describe("mobile Safari handoff background flow", () => {
       reviews: [{ id: "review-1", rating: 5 }],
     });
     expect(storage["reviewmoa.activeJob"]).toBeNull();
+    expect(storage["reviewmoa.lastResult"]).toMatchObject({
+      status: "completed",
+      reviewCount: 1,
+    });
+    expect(storage["reviewmoa.lastResult"]).not.toHaveProperty("reviews");
   });
 });
