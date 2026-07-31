@@ -1,17 +1,22 @@
 # 리뷰모아 iPhone Safari Web Extension
 
-`extension/`은 Chrome과 Safari가 함께 사용하는 WebExtension 원본이다. 중앙 collector가
-`captcha`, `login_required`, `operator_required`로 작업을 멈추면 iPhone의 리뷰모아
-웹에서 `이 iPhone에서 보안 확인하기`를 누른다.
+`extension/`은 Chrome과 Safari가 함께 사용하는 WebExtension 원본이다. iPhone
+Safari에서 상품 URL을 제출하면 중앙 collector를 기다리지 않고 확장이 해당 작업을
+직접 맡는다.
 
 확장은 다음 순서로 동작한다.
 
-1. 작업별 일회성 인계 토큰과 상품 URL을 확장 저장소에 보관한다.
-2. Safari에서 해당 상품 페이지를 연다.
-3. 사용자가 로그인 또는 보안 확인을 직접 완료한다.
-4. 보안 화면이 사라지고 상품 페이지가 두 번 연속 확인되면 리뷰 수집을 시작한다.
+1. 웹이 iPhone Safari 확장을 확인하고 작업을 `mobile-safari` 소유로 생성한다.
+2. 확장이 Safari의 새 탭에서 해당 상품 페이지를 즉시 연다.
+3. CAPTCHA나 로그인이 없으면 바로 리뷰를 수집한다.
+4. CAPTCHA 또는 로그인이 실제로 표시된 경우에만 사용자가 직접 완료하고, 사라지면
+   자동으로 수집을 재개한다.
 5. 공개 리뷰만 Worker의 `mobile-complete` API로 전송한다.
-6. 성공하면 인계 토큰을 서버에서 폐기하고 웹의 기존 폴링이 완성된 보고서를 표시한다.
+6. 성공하면 원래 리뷰모아 탭으로 돌아오고 상품 탭을 닫는다. 웹의 기존 폴링이
+   분석된 보고서를 표시한다.
+
+`이 iPhone에서 보안 확인하기` 버튼은 자동 시작이 실패했거나 실제 보안 확인 중
+전송이 중단됐을 때 다시 시도하는 용도다.
 
 로그인 쿠키, 비밀번호, CAPTCHA 답은 Worker나 중앙 Mac으로 전송하지 않는다. iPhone에서
 얻은 보안 통과 상태는 Mac Chrome과 공유되지 않기 때문에 리뷰 수집도 같은 Safari
@@ -53,5 +58,6 @@ xcrun --find safari-web-extension-packager
 운영 배포 전에는 App Store Connect/TestFlight 검증과 확장 권한 설명을 별도로
 마무리한다.
 
-2026-07-30 기준 무료 Personal Team으로 실제 iPhone 설치, 개발자 신뢰, Safari 확장
-활성화와 네이버 상품 페이지의 팝업 실행까지 확인했다.
+2026-07-31 기준 무료 Personal Team으로 실제 iPhone 설치, 개발자 신뢰, Safari 확장
+활성화와 네이버 상품 페이지의 팝업 실행까지 확인했다. 확장 0.1.5부터 iPhone 작업은
+제출 즉시 모바일 수집을 시작하며, 진행 heartbeat와 자동 복귀를 사용한다.

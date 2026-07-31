@@ -31,6 +31,7 @@ export type JobStatus =
 
 export interface JobProgress {
   stage?: string;
+  source?: string;
   rating?: number;
   checked?: number;
   accepted?: number;

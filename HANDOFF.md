@@ -1183,18 +1183,22 @@ Run, 다중 collector, 고급 AI 분류를 추가하지 않는다.
 `operator_required`로 중단하도록 수정했으며 하이웰 canary에서 해당 상태를
 재확인했다.
 
-작업별 7일짜리 일회성 인계 토큰과 `mobile-complete` API, iPhone Safari
-WebExtension 인계 흐름을 추가했다. iPhone에서 보안 확인이 사라지고 상품 페이지가
-두 번 연속 확인되면 해당 Safari 세션이 공개 리뷰를 직접 수집·업로드한다. iPhone의
+작업별 7일짜리 일회성 인계 토큰과 인증된 `mobile-start`, `mobile-heartbeat`,
+`mobile-interrupt`, `mobile-complete` API, iPhone Safari WebExtension 수집 흐름을
+추가했다. iPhone Safari에서 URL을 제출하면 작업 생성과 동시에 모바일 확장이
+소유권을 얻고 새 상품 탭을 연다. CAPTCHA가 없으면 즉시 수집하고, 실제 CAPTCHA나
+로그인이 있을 때만 사용자가 처리한 뒤 자동 재개한다. 완료 시 리뷰모아 탭으로
+복귀하고 상품 탭을 닫는다. iPhone의
 보안 쿠키는 Mac collector와 공유하지 않는다. Xcode 26.6에서 iOS 앱과 Safari 확장
 프로젝트 생성을 완료했고 시뮬레이터용 전체 빌드도 통과했다. Safari가 지원하지 않는
 Manifest V3 백그라운드 `type` 키는 패키징할 때만 제거하고 런타임 설정을 일반
 스크립트에 삽입한다. 부모 앱과 확장의 Bundle ID도
 `kr.reviewmoa.ReviewMoa` / `kr.reviewmoa.ReviewMoa.Extension`으로 정합성을 맞췄다.
 무료 Personal Team을 두 타깃에 지정해 실제 iPhone 15 Pro 설치와 개발자 신뢰,
-Safari 확장 활성화, 네이버 상품 페이지의 확장 팝업 실행까지 확인했다. 다음 단계는
-운영 D1 마이그레이션과 Worker·웹을 배포한 뒤 보안 확인 완료 감지와 작업 재개를
-전체 흐름으로 검증하는 것이다.
+Safari 확장 활성화, 네이버 상품 페이지의 확장 팝업 실행까지 확인했다. 확장 저장
+용량 오류를 피하도록 새 작업 시작 시 확장 로컬 저장소를 비우며 리뷰 본문은 서버
+전송 후 로컬에 남기지 않는다. 다음 단계는 0.1.5 앱을 실제 iPhone에 설치하고
+`CAPTCHA 없음` 및 `CAPTCHA 있음` 두 경로를 전체 흐름으로 검증하는 것이다.
 
 모바일 로드맵은 기본적으로 `중앙 맥북 → iPhone Safari Web Extension → Android
 Firefox(선택) → 전용 모바일 앱`이다. Android Firefox 단계를 건너뛰고 Safari 확장

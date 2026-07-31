@@ -38,10 +38,13 @@ export interface CreateJobResult {
   deduplicated?: boolean;
 }
 
-export function createJob(product: ProductIdentity) {
+export function createJob(
+  product: ProductIdentity,
+  options?: { collector?: "ios-safari" },
+) {
   return request<CreateJobResult>("/v1/jobs", {
     method: "POST",
-    body: JSON.stringify({ product }),
+    body: JSON.stringify({ product, ...options }),
   });
 }
 

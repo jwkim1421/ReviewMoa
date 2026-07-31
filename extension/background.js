@@ -3,6 +3,11 @@ import { REVIEWMOA_API_BASE } from "./runtime-config.js";
 const ACTIVE_KEY = "reviewmoa.activeJob";
 const RESULT_KEY = "reviewmoa.lastResult";
 const OPERATOR_REASONS = new Set(["captcha", "login_required", "access_limited"]);
+const INTERRUPTION_REASONS = {
+  captcha: "captcha",
+  login_required: "login_required",
+  access_limited: "access_blocked",
+};
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "REVIEWMOA_PING") {
@@ -67,12 +72,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "REVIEWMOA_COLLECTION_PROGRESS") {
-    chrome.storage.local.get(ACTIVE_KEY).then((state) => {
+    chrome.storage.local.get(ACTIVE_KEY).then(async (state) => {
       const activeJob = state[ACTIVE_KEY];
       if (!activeJob || activeJob.id !== message.payload?.jobId) return;
-      return chrome.storage.local.set({
+      await chrome.storage.local.set({
         [ACTIVE_KEY]: { ...activeJob, ...message.payload },
       });
+      if (activeJob.mode === "mobile-handoff") {
+        await fetch(
+          `${REVIEWMOA_API_BASE}/v1/jobs/${encodeURIComponent(activeJob.id)}/mobile-heartbeat`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              operatorToken: activeJob.operatorToken,
+              progress: message.payload,
+            }),
+          },
+        ).catch(() => undefined);
+      }
     }).then(() => sendResponse({ ok: true }));
     return true;
   }
@@ -150,7 +168,23 @@ async function startMobileHandoff(payload, returnTabId) {
     createdAt: new Date().toISOString(),
     returnTabId,
   };
-  await chrome.storage.local.remove(RESULT_KEY);
+  const response = await fetch(
+    `${REVIEWMOA_API_BASE}/v1/jobs/${encodeURIComponent(job.id)}/mobile-start`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operatorToken: job.operatorToken }),
+    },
+  );
+  const responsePayload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      responsePayload.error === "MOBILE_HANDOFF_NOT_AVAILABLE"
+        ? "이 작업은 다른 수집기가 처리 중입니다. 새 상품 요청으로 다시 시도해 주세요."
+        : "iPhone 수집 작업을 시작하지 못했습니다.",
+    );
+  }
+  await chrome.storage.local.clear();
   await chrome.storage.local.set({ [ACTIVE_KEY]: job });
   try {
     const tab = await chrome.tabs.create({ url: payload.url, active: true });
@@ -180,6 +214,19 @@ async function handleMobileCollectionResult(job, result) {
   const storedResult = compactResult(result);
   if (!["completed", "partial"].includes(result.status)) {
     const needsOperator = OPERATOR_REASONS.has(result.reason);
+    if (needsOperator) {
+      await fetch(
+        `${REVIEWMOA_API_BASE}/v1/jobs/${encodeURIComponent(job.id)}/mobile-interrupt`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operatorToken: job.operatorToken,
+            reason: INTERRUPTION_REASONS[result.reason],
+          }),
+        },
+      ).catch(() => undefined);
+    }
     await chrome.storage.local.set({
       [ACTIVE_KEY]: needsOperator
         ? {

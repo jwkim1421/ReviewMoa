@@ -267,9 +267,110 @@ describe("collector queue API", () => {
     const insert = statements.find((statement) =>
       statement.sql.includes("INSERT INTO jobs")
     );
-    expect(insert?.sql).toContain("'queued'");
+    expect(insert?.bindings[3]).toBe("queued");
     expect(insert?.sql).toContain("requested_at");
-    expect(insert?.bindings).toHaveLength(8);
+    expect(insert?.bindings).toHaveLength(14);
+  });
+
+  it("creates an iPhone-owned job that the central collector cannot claim", async () => {
+    const { db, statements } = createDb();
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product: { source: "naver", productId: "123" },
+          collector: "ios-safari",
+        }),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ status: "collecting" });
+    const insert = statements.find((statement) =>
+      statement.sql.includes("INSERT INTO jobs")
+    );
+    expect(insert?.bindings[3]).toBe("collecting");
+    expect(insert?.bindings[9]).toBe("mobile-safari");
+    expect(insert?.bindings[13]).toBe("ios-safari");
+  });
+
+  it("starts and interrupts a mobile Safari collection with its operator token", async () => {
+    const operatorToken = "f".repeat(64);
+    const job = {
+      id: "job-1",
+      cache_key: "naver:123:all",
+      product_json: JSON.stringify({ source: "naver", productId: "123" }),
+      status: "queued",
+      capability_json: null,
+      error_code: null,
+      progress_json: null,
+      interruption_reason: null,
+      requested_at: "2026-07-31T00:00:00.000Z",
+      started_at: null,
+      finished_at: null,
+      operator_token_hash: "unused-by-fake-db",
+      operator_token_expires_at: "2099-01-01T00:00:00.000Z",
+      created_at: "2026-07-31T00:00:00.000Z",
+      updated_at: "2026-07-31T00:00:00.000Z",
+    };
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) return job;
+        if (
+          sql.includes("SET status = 'collecting'") &&
+          sql.includes("handoff_source = 'ios-safari'")
+        ) return { id: job.id };
+      },
+    });
+
+    const started = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-1/mobile-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorToken }),
+      }),
+      collectorEnv(db),
+    );
+    expect(started.status).toBe(200);
+    await expect(started.json()).resolves.toMatchObject({ status: "collecting" });
+
+    const interrupted = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-1/mobile-interrupt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorToken, reason: "captcha" }),
+      }),
+      collectorEnv(db),
+    );
+    expect(interrupted.status).toBe(200);
+    await expect(interrupted.json()).resolves.toMatchObject({
+      status: "waiting_for_operator",
+      reason: "captcha",
+    });
+    expect(statements.some((statement) =>
+      statement.sql.includes("claimed_by = 'mobile-safari'")
+    )).toBe(true);
+
+    const heartbeat = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-1/mobile-heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operatorToken,
+          progress: { stage: "collecting", accepted: 12 },
+        }),
+      }),
+      collectorEnv(db),
+    );
+    expect(heartbeat.status).toBe(200);
+    await expect(heartbeat.json()).resolves.toMatchObject({ status: "collecting" });
+    const heartbeatUpdate = statements.find((statement) =>
+      statement.sql.includes("SET heartbeat_at = ?") &&
+      statement.sql.includes("operator_token_hash")
+    );
+    expect(heartbeatUpdate?.bindings[1]).toContain('"source":"ios-safari"');
   });
 
   it("returns a valid cached report instead of creating another job", async () => {
@@ -770,14 +871,14 @@ describe("collector queue API", () => {
         statement.sql.includes("handoff_source = 'ios-safari'")
       );
       expect(claim?.sql).toContain(
-        "OR (status = 'analyzing' AND claimed_by = 'mobile-safari')",
+        "OR (status = 'collecting' AND claimed_by = 'mobile-safari')",
       );
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("recovers a stale interrupted iPhone analysis during cleanup", async () => {
+  it("recovers a stale interrupted iPhone collection or analysis during cleanup", async () => {
     const { db, statements } = createDb();
     await worker.fetch(
       new Request("https://api.example/v1/jobs/missing"),
@@ -789,6 +890,7 @@ describe("collector queue API", () => {
       statement.sql.includes("claimed_by = 'mobile-safari'")
     );
     expect(recovery?.sql).toContain("status = 'waiting_for_operator'");
+    expect(recovery?.sql).toContain("status IN ('collecting', 'analyzing')");
     expect(recovery?.sql).toContain("NOT EXISTS");
     expect(recovery?.bindings[0]).toContain("다시 시도할 수 있어요");
   });

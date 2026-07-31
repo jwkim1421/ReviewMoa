@@ -226,9 +226,10 @@ async function cleanup(env: AppEnv) {
       `UPDATE jobs
        SET status = 'waiting_for_operator',
            claimed_by = NULL,
+           interruption_reason = 'operator_required',
            progress_json = ?,
            updated_at = ?
-       WHERE status = 'analyzing'
+       WHERE status IN ('collecting', 'analyzing')
          AND claimed_by = 'mobile-safari'
          AND updated_at < ?
          AND NOT EXISTS (
@@ -668,6 +669,7 @@ async function handle(request: Request, env: AppEnv) {
   if (request.method === "POST" && url.pathname === "/v1/jobs") {
     const body = await readBody<{
       product?: Record<string, unknown> & { source?: unknown; productId?: unknown };
+      collector?: unknown;
     }>(request);
     if (
       !body.product ||
@@ -678,6 +680,10 @@ async function handle(request: Request, env: AppEnv) {
     ) {
       return json({ error: "INVALID_PRODUCT" }, 400, origin);
     }
+    if (body.collector !== undefined && body.collector !== "ios-safari") {
+      return json({ error: "INVALID_COLLECTOR" }, 400, origin);
+    }
+    const mobileRequested = body.collector === "ios-safari";
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const operatorToken = createOperatorToken();
@@ -718,37 +724,91 @@ async function handle(request: Request, env: AppEnv) {
        LIMIT 1`,
     ).bind(key).first<{ id: string; status: string }>();
     if (active) {
-      await env.DB.prepare(
-        `UPDATE jobs
-         SET operator_token_hash = ?,
-             operator_token_expires_at = ?,
-             updated_at = ?
-         WHERE id = ?`,
-      ).bind(operatorTokenHash, operatorTokenExpiresAt, now, active.id).run();
+      let status = active.status;
+      if (
+        mobileRequested &&
+        ["queued", "waiting_for_operator", "waiting_for_login", "waiting_for_user"].includes(active.status)
+      ) {
+        const claimed = await env.DB.prepare(
+          `UPDATE jobs
+           SET status = 'collecting',
+               claimed_by = 'mobile-safari',
+               started_at = COALESCE(started_at, ?),
+               heartbeat_at = ?,
+               lease_expires_at = NULL,
+               interruption_reason = NULL,
+               progress_json = ?,
+               handoff_source = 'ios-safari',
+               operator_token_hash = ?,
+               operator_token_expires_at = ?,
+               updated_at = ?
+           WHERE id = ?
+             AND status IN (
+               'queued', 'waiting_for_operator', 'waiting_for_login', 'waiting_for_user'
+             )
+           RETURNING id`,
+        ).bind(
+          now,
+          now,
+          JSON.stringify({
+            stage: "opening_product",
+            message: "iPhone Safari에서 상품 페이지를 열고 있어요.",
+            source: "ios-safari",
+          }),
+          operatorTokenHash,
+          operatorTokenExpiresAt,
+          now,
+          active.id,
+        ).first<{ id: string }>();
+        if (claimed) status = "collecting";
+      } else {
+        await env.DB.prepare(
+          `UPDATE jobs
+           SET operator_token_hash = ?,
+               operator_token_expires_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        ).bind(operatorTokenHash, operatorTokenExpiresAt, now, active.id).run();
+      }
       return json({
         id: active.id,
-        status: active.status,
+        status,
         operatorToken,
         deduplicated: true,
       }, 200, origin);
     }
 
+    const status = mobileRequested ? "collecting" : "queued";
+    const progress = mobileRequested
+      ? JSON.stringify({
+          stage: "opening_product",
+          message: "iPhone Safari에서 상품 페이지를 열고 있어요.",
+          source: "ios-safari",
+        })
+      : null;
     await env.DB.prepare(
       `INSERT INTO jobs(
          id, cache_key, product_json, status, requested_at, created_at, updated_at,
-         operator_token_hash, operator_token_expires_at
-       ) VALUES(?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+         operator_token_hash, operator_token_expires_at, claimed_by, started_at,
+         heartbeat_at, progress_json, handoff_source
+       ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       key,
       JSON.stringify(body.product),
+      status,
       now,
       now,
       now,
       operatorTokenHash,
       operatorTokenExpiresAt,
+      mobileRequested ? "mobile-safari" : null,
+      mobileRequested ? now : null,
+      mobileRequested ? now : null,
+      progress,
+      mobileRequested ? "ios-safari" : null,
     ).run();
-    return json({ id, status: "queued", operatorToken }, 201, origin);
+    return json({ id, status, operatorToken }, 201, origin);
   }
 
   const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)(?:\/([^/]+))?$/);
@@ -798,6 +858,131 @@ async function handle(request: Request, env: AppEnv) {
     }, 200, origin);
   }
 
+  if (request.method === "POST" && action === "mobile-start") {
+    const body = await readBody<{ operatorToken?: unknown }>(request);
+    if (!validOperatorToken(body.operatorToken)) {
+      return json({ error: "INVALID_OPERATOR_TOKEN" }, 401, origin);
+    }
+    const now = new Date().toISOString();
+    const tokenHash = await hashOperatorToken(body.operatorToken);
+    const claimed = await env.DB.prepare(
+      `UPDATE jobs
+       SET status = 'collecting',
+           claimed_by = 'mobile-safari',
+           started_at = COALESCE(started_at, ?),
+           heartbeat_at = ?,
+           lease_expires_at = NULL,
+           interruption_reason = NULL,
+           progress_json = ?,
+           handoff_source = 'ios-safari',
+           updated_at = ?
+       WHERE id = ?
+         AND (
+           status = 'queued'
+           OR (
+             status = 'waiting_for_operator'
+             AND interruption_reason IN (
+               'captcha', 'login_required', 'access_blocked', 'operator_required'
+             )
+           )
+           OR (status = 'collecting' AND claimed_by = 'mobile-safari')
+         )
+         AND operator_token_hash = ?
+         AND operator_token_expires_at >= ?
+       RETURNING id`,
+    ).bind(
+      now,
+      now,
+      JSON.stringify({
+        stage: "opening_product",
+        message: "iPhone Safari에서 상품 페이지를 열고 있어요.",
+        source: "ios-safari",
+      }),
+      now,
+      jobId,
+      tokenHash,
+      now,
+    ).first<{ id: string }>();
+    return claimed
+      ? json({ id: jobId, status: "collecting" }, 200, origin)
+      : json({ error: "MOBILE_HANDOFF_NOT_AVAILABLE" }, 409, origin);
+  }
+
+  if (request.method === "POST" && action === "mobile-interrupt") {
+    const body = await readBody<{
+      operatorToken?: unknown;
+      reason?: unknown;
+    }>(request);
+    if (!validOperatorToken(body.operatorToken)) {
+      return json({ error: "INVALID_OPERATOR_TOKEN" }, 401, origin);
+    }
+    if (
+      typeof body.reason !== "string" ||
+      !["captcha", "login_required", "access_blocked", "operator_required"].includes(body.reason)
+    ) {
+      return json({ error: "INVALID_INTERRUPTION_REASON" }, 400, origin);
+    }
+    const now = new Date().toISOString();
+    const tokenHash = await hashOperatorToken(body.operatorToken);
+    const interrupted = await env.DB.prepare(
+      `UPDATE jobs
+       SET status = 'waiting_for_operator',
+           interruption_reason = ?,
+           progress_json = ?,
+           heartbeat_at = ?,
+           updated_at = ?
+       WHERE id = ?
+         AND status = 'collecting'
+         AND claimed_by = 'mobile-safari'
+         AND operator_token_hash = ?
+         AND operator_token_expires_at >= ?`,
+    ).bind(
+      body.reason,
+      JSON.stringify({
+        stage: "waiting_for_operator",
+        message: "iPhone Safari에서 보안 확인을 완료해 주세요.",
+        source: "ios-safari",
+      }),
+      now,
+      now,
+      jobId,
+      tokenHash,
+      now,
+    ).run();
+    return interrupted.meta.changes
+      ? json({ id: jobId, status: "waiting_for_operator", reason: body.reason }, 200, origin)
+      : json({ error: "MOBILE_HANDOFF_NOT_AVAILABLE" }, 409, origin);
+  }
+
+  if (request.method === "POST" && action === "mobile-heartbeat") {
+    const body = await readBody<{
+      operatorToken?: unknown;
+      progress?: unknown;
+    }>(request);
+    if (!validOperatorToken(body.operatorToken)) {
+      return json({ error: "INVALID_OPERATOR_TOKEN" }, 401, origin);
+    }
+    const now = new Date().toISOString();
+    const tokenHash = await hashOperatorToken(body.operatorToken);
+    const progress = body.progress && typeof body.progress === "object"
+      ? JSON.stringify({ ...(body.progress as Record<string, unknown>), source: "ios-safari" })
+      : JSON.stringify({ stage: "collecting", source: "ios-safari" });
+    const heartbeat = await env.DB.prepare(
+      `UPDATE jobs
+       SET heartbeat_at = ?,
+           progress_json = ?,
+           updated_at = ?
+       WHERE id = ?
+         AND status = 'collecting'
+         AND claimed_by = 'mobile-safari'
+         AND operator_token_hash = ?
+         AND operator_token_expires_at >= ?`,
+    ).bind(now, progress, now, jobId, tokenHash, now).run();
+    return heartbeat.meta.changes
+      ? json({ id: jobId, status: "collecting" }, 200, origin)
+      : json({ error: "MOBILE_HANDOFF_NOT_AVAILABLE" }, 409, origin);
+  }
+
   if (request.method === "POST" && action === "mobile-complete") {
     const body = await readBody<{
       operatorToken?: unknown;
@@ -836,8 +1021,11 @@ async function handle(request: Request, env: AppEnv) {
          AND (
            (
              status = 'waiting_for_operator'
-             AND interruption_reason IN ('captcha', 'login_required', 'operator_required')
+             AND interruption_reason IN (
+               'captcha', 'login_required', 'access_blocked', 'operator_required'
+             )
            )
+           OR (status = 'collecting' AND claimed_by = 'mobile-safari')
            OR (status = 'analyzing' AND claimed_by = 'mobile-safari')
          )
          AND operator_token_hash = ?

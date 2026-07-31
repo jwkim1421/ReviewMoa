@@ -20,12 +20,23 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { JobSnapshot, JobStatus, ProductIdentity, Report } from "./domain/types";
 import { ProductUrlError, resolveProductInput } from "./domain/url";
 import { createJob, getJob, refreshJob } from "./lib/api";
-import { getMobileHandoffState, startMobileHandoff } from "./lib/extension";
+import {
+  getMobileHandoffState,
+  hasCollectorExtension,
+  startMobileHandoff,
+} from "./lib/extension";
 
 const sources = ["네이버", "쿠팡", "컬리", "오늘의집", "11번가", "SSG닷컴", "G마켓"];
 type View = "home" | "probing" | "report" | "ideas";
 const STORED_JOB_KEY = "reviewmoa.activeJobId";
 const operatorTokenKey = (jobId: string) => `reviewmoa.operatorToken.${jobId}`;
+
+function isIphoneSafari() {
+  const agent = window.navigator.userAgent;
+  return /iPhone/i.test(agent) &&
+    /Safari/i.test(agent) &&
+    !/(CriOS|FxiOS|EdgiOS|OPiOS)/i.test(agent);
+}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -150,7 +161,11 @@ export function App() {
       setProduct(resolved);
       setView("probing");
       setJob(undefined);
-      const created = await createJob(resolved);
+      const useIphoneCollector = isIphoneSafari() && await hasCollectorExtension();
+      const created = await createJob(
+        resolved,
+        useIphoneCollector ? { collector: "ios-safari" } : undefined,
+      );
       rememberJob(created.id, created.operatorToken);
       setJob({
         id: created.id,
@@ -161,6 +176,23 @@ export function App() {
       if (created.report) {
         setReport(created.report);
         setView("report");
+      } else if (useIphoneCollector && created.operatorToken) {
+        setHandoffStarting(true);
+        try {
+          await startMobileHandoff({
+            jobId: created.id,
+            operatorToken: created.operatorToken,
+            url: resolved.canonicalUrl,
+          });
+        } catch (caught) {
+          setHandoffError(
+            caught instanceof Error
+              ? caught.message
+              : "iPhone에서 상품 페이지를 열지 못했습니다.",
+          );
+        } finally {
+          setHandoffStarting(false);
+        }
       }
     } catch (caught) {
       setError(caught instanceof ProductUrlError || caught instanceof Error ? caught.message : "URL을 확인하지 못했습니다.");
@@ -487,6 +519,7 @@ function Probe({
   onBack: () => void;
 }) {
   const status = job?.status ?? "queued";
+  const mobileCollecting = job?.progress?.source === "ios-safari";
   const step = statusStep(status);
   const stopped = ["failed", "cancelled"].includes(status);
   const waiting = ["waiting_for_operator", "waiting_for_login", "waiting_for_user"].includes(status);
@@ -502,13 +535,23 @@ function Probe({
   return (
     <section className="probe-page">
       <button className="text-button probe-back" onClick={onBack}><ArrowLeft size={16} /> 다른 상품 확인</button>
-      <div className="probe-kicker">{waiting ? "OPERATOR CHECK" : stopped ? "COLLECTION STOPPED" : "CENTRAL COLLECTOR"}</div>
+      <div className="probe-kicker">
+        {waiting
+          ? "OPERATOR CHECK"
+          : stopped
+            ? "COLLECTION STOPPED"
+            : mobileCollecting
+              ? "IPHONE COLLECTOR"
+              : "CENTRAL COLLECTOR"}
+      </div>
       <h1>
         {waiting
           ? <>보안 확인 후<br />이어서 수집할게요.</>
           : stopped
             ? <>리뷰를 안전하게<br />가져오지 못했어요.</>
-            : <>중앙 수집 서버가<br />리뷰를 확인하고 있어요.</>}
+            : mobileCollecting
+              ? <>이 iPhone에서<br />리뷰를 확인하고 있어요.</>
+              : <>중앙 수집 서버가<br />리뷰를 확인하고 있어요.</>}
       </h1>
       <p>{message}</p>
       <div className="probe-list">
@@ -533,7 +576,7 @@ function Probe({
         ))}
       </div>
       {status === "waiting_for_operator" &&
-        ["captcha", "login_required", "operator_required"].includes(job?.interruptionReason ?? "") && (
+        ["captcha", "login_required", "access_blocked", "operator_required"].includes(job?.interruptionReason ?? "") && (
           <>
             <button className="probe-retry" onClick={onMobileHandoff} disabled={handoffStarting}>
               {handoffStarting ? "Safari 확장을 여는 중…" : "이 iPhone에서 보안 확인하기"}

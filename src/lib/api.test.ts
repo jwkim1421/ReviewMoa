@@ -32,6 +32,22 @@ describe("queued job API client", () => {
     });
   });
 
+  it("requests an iPhone-owned job when the Safari extension is ready", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        product: PRODUCT,
+        collector: "ios-safari",
+      });
+      return Response.json({ id: "job-mobile", status: "collecting" }, { status: 201 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createJob(PRODUCT, { collector: "ios-safari" })).resolves.toMatchObject({
+      id: "job-mobile",
+      status: "collecting",
+    });
+  });
+
   it("polls job state without forcing a CORS JSON preflight header", async () => {
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.headers).not.toHaveProperty("Content-Type");

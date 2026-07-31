@@ -37,6 +37,9 @@ beforeAll(async () => {
           const names = Array.isArray(keys) ? keys : [keys];
           names.forEach((name) => delete storage[name]);
         },
+        async clear() {
+          storage = {};
+        },
       },
     },
     tabs: {
@@ -61,6 +64,9 @@ beforeEach(() => {
   updateTab.mockClear();
   removeTab.mockClear();
   vi.restoreAllMocks();
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    Response.json({ status: "collecting" }, { status: 200 })
+  ));
 });
 
 function sendMessage(message: Record<string, unknown>, sender: unknown = {}) {
@@ -104,6 +110,13 @@ describe("mobile Safari handoff background flow", () => {
       returnTabId: 9,
     });
     expect(storage).not.toHaveProperty("reviewmoa.lastResult");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/mobile-start"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ operatorToken }),
+      }),
+    );
 
     await updatedListener(17, { status: "complete" });
     expect(sendTabMessage).not.toHaveBeenCalled();
@@ -192,6 +205,15 @@ describe("mobile Safari handoff background flow", () => {
     })).resolves.toEqual({ ok: true });
 
     expect(storage["reviewmoa.activeJob"]).toMatchObject({ reason: "captcha" });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/mobile-interrupt"),
+      expect.objectContaining({
+        body: JSON.stringify({
+          operatorToken: "c".repeat(64),
+          reason: "captcha",
+        }),
+      }),
+    );
     expect(updateTab).not.toHaveBeenCalled();
     expect(removeTab).not.toHaveBeenCalled();
   });
