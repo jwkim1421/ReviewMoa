@@ -89,8 +89,11 @@ describe("mobile Safari handoff background flow", () => {
     )).resolves.toEqual({ ok: true });
 
     expect(createTab).toHaveBeenCalledWith({
-      url: "https://smartstore.naver.com/hiwell/products/5038692181",
+      url: "about:blank",
       active: true,
+    });
+    expect(updateTab).toHaveBeenCalledWith(17, {
+      url: "https://smartstore.naver.com/hiwell/products/5038692181",
     });
     expect(storage["reviewmoa.activeJob"]).toMatchObject({
       id: "11111111-1111-4111-8111-111111111111",
@@ -102,8 +105,15 @@ describe("mobile Safari handoff background flow", () => {
     expect(storage).not.toHaveProperty("reviewmoa.lastResult");
 
     await updatedListener(17, { status: "complete" });
-    expect(sendTabMessage).toHaveBeenCalledWith(17, {
-      type: "REVIEWMOA_PROBE_AND_COLLECT",
+    expect(sendTabMessage).not.toHaveBeenCalled();
+
+    await expect(sendMessage(
+      {
+        type: "REVIEWMOA_PRODUCT_READY",
+        url: "https://smartstore.naver.com/hiwell/products/5038692181",
+      },
+      { tab: { id: 17 } },
+    )).resolves.toEqual({
       job: {
         id: "11111111-1111-4111-8111-111111111111",
         url: "https://smartstore.naver.com/hiwell/products/5038692181",

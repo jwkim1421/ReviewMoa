@@ -34,6 +34,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "REVIEWMOA_PRODUCT_READY") {
+    chrome.storage.local.get(ACTIVE_KEY).then((state) => {
+      const job = state[ACTIVE_KEY];
+      const matchesTab = job?.tabId === sender.tab?.id;
+      if (
+        job?.mode !== "mobile-handoff" ||
+        !matchesTab ||
+        !allowedProductUrl(message.url)
+      ) {
+        sendResponse({ job: null });
+        return;
+      }
+      sendResponse({
+        job: {
+          id: job.id,
+          url: job.url,
+          mode: job.mode,
+        },
+      });
+    }).catch(() => sendResponse({ job: null }));
+    return true;
+  }
+
   if (message?.type === "REVIEWMOA_COLLECTION_PROGRESS") {
     chrome.storage.local.get(ACTIVE_KEY).then((state) => {
       const activeJob = state[ACTIVE_KEY];
@@ -107,9 +130,10 @@ async function startMobileHandoff(payload, returnTabId) {
     returnTabId,
   };
   await chrome.storage.local.remove(RESULT_KEY);
-  const tab = await chrome.tabs.create({ url: payload.url, active: true });
+  const tab = await chrome.tabs.create({ url: "about:blank", active: true });
   job.tabId = tab.id;
   await chrome.storage.local.set({ [ACTIVE_KEY]: job });
+  await chrome.tabs.update(tab.id, { url: payload.url });
   return { ok: true };
 }
 
@@ -201,6 +225,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   const state = await chrome.storage.local.get(ACTIVE_KEY);
   const job = state[ACTIVE_KEY];
   if (!job || job.tabId !== tabId) return;
+  if (job.mode === "mobile-handoff") return;
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: "REVIEWMOA_PROBE_AND_COLLECT",

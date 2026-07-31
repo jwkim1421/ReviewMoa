@@ -24,18 +24,39 @@ let activeCollection;
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "REVIEWMOA_PROBE_AND_COLLECT") return;
-    runCollection(message.job)
-      .then(async (result) => {
-        await chrome.runtime.sendMessage({ type: "REVIEWMOA_COLLECTION_RESULT", payload: result });
-        sendResponse(result);
-      })
-      .catch(async (error) => {
-        const result = { jobId: message.job.id, status: "failed", reason: error.message };
-        await chrome.runtime.sendMessage({ type: "REVIEWMOA_COLLECTION_RESULT", payload: result });
-        sendResponse(result);
-      });
+    collectAndReport(message.job).then(sendResponse);
     return true;
   });
+
+  void chrome.runtime.sendMessage({
+    type: "REVIEWMOA_PRODUCT_READY",
+    url: location.href,
+  }).then((response) => {
+    if (response?.job) return collectAndReport(response.job);
+  }).catch(() => undefined);
+}
+
+async function collectAndReport(job) {
+  try {
+    const result = await runCollection(job);
+    await chrome.runtime.sendMessage({
+      type: "REVIEWMOA_COLLECTION_RESULT",
+      payload: result,
+    });
+    return result;
+  } catch (error) {
+    const result = {
+      jobId: job.id,
+      status: "failed",
+      reason: error instanceof Error ? error.message : "collection_failed",
+      message: "상품 페이지에서 리뷰 수집을 시작하지 못했습니다.",
+    };
+    await chrome.runtime.sendMessage({
+      type: "REVIEWMOA_COLLECTION_RESULT",
+      payload: result,
+    });
+    return result;
+  }
 }
 
 function runCollection(job) {
