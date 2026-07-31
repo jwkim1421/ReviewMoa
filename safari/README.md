@@ -60,4 +60,6 @@ xcrun --find safari-web-extension-packager
 
 2026-07-31 기준 무료 Personal Team으로 실제 iPhone 설치, 개발자 신뢰, Safari 확장
 활성화와 네이버 상품 페이지의 팝업 실행까지 확인했다. 확장 0.1.5부터 iPhone 작업은
-제출 즉시 모바일 수집을 시작하며, 진행 heartbeat와 자동 복귀를 사용한다.
+제출 즉시 모바일 수집을 시작하며, 진행 heartbeat와 자동 복귀를 사용한다. 0.1.6부터
+수집 중에는 상품 페이지 조작을 막는 진행 오버레이를 표시하고, CAPTCHA나 로그인이
+실제로 감지된 경우에만 오버레이를 제거한다.

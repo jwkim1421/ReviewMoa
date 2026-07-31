@@ -18,6 +18,7 @@ const MAX_INCLUDED_PER_RATING = 100;
 const MAX_SCANNED_PER_RATING = 300;
 const MAX_SCANNED_WITHOUT_FILTER = 3000;
 const MAX_PAGE_ATTEMPTS = 40;
+const COLLECTION_OVERLAY_ID = "reviewmoa-collection-overlay";
 let operatorWatchTimer;
 let activeCollection;
 
@@ -61,6 +62,18 @@ async function collectAndReport(job) {
 
 function runCollection(job) {
   if (activeCollection) return activeCollection;
+  const interruption = detectInterruption();
+  if (interruption) {
+    hideCollectionOverlay();
+    if (
+      job.mode === "mobile-handoff" &&
+      ["captcha", "login_required", "access_limited"].includes(interruption.reason)
+    ) {
+      watchForOperatorCompletion(job, interruption.reason);
+    }
+    return Promise.resolve({ jobId: job.id, ...interruption, url: location.href });
+  }
+  showCollectionOverlay("상품과 리뷰 영역을 확인하고 있어요.");
   activeCollection = collect(job)
     .then((result) => {
       if (
@@ -70,14 +83,95 @@ function runCollection(job) {
           result.reason,
         )
       ) {
+        hideCollectionOverlay();
         watchForOperatorCompletion(job, result.reason);
+      } else if (["completed", "partial"].includes(result.status)) {
+        updateCollectionOverlay("리뷰 수집을 마쳤어요. 결과를 정리하고 있어요.");
       }
       return result;
+    })
+    .catch((error) => {
+      hideCollectionOverlay();
+      throw error;
     })
     .finally(() => {
       activeCollection = null;
     });
   return activeCollection;
+}
+
+function showCollectionOverlay(message) {
+  let host = document.getElementById(COLLECTION_OVERLAY_ID);
+  if (!host) {
+    host = document.createElement("div");
+    host.id = COLLECTION_OVERLAY_ID;
+    host.setAttribute("role", "status");
+    host.setAttribute("aria-live", "polite");
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = `
+      <style>
+        :host {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483647;
+          display: grid;
+          place-items: center;
+          padding: 24px;
+          background: rgba(24, 31, 28, .58);
+          -webkit-backdrop-filter: blur(5px);
+          backdrop-filter: blur(5px);
+          touch-action: none;
+          overscroll-behavior: contain;
+          cursor: wait;
+        }
+        .card {
+          width: min(320px, calc(100vw - 48px));
+          padding: 30px 24px 27px;
+          border-radius: 22px;
+          color: #27241f;
+          background: #fffdf8;
+          box-shadow: 0 22px 60px rgba(0, 0, 0, .28);
+          text-align: center;
+          font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+            "Noto Sans KR", sans-serif;
+        }
+        .spinner {
+          width: 46px;
+          height: 46px;
+          margin: 0 auto 20px;
+          border: 4px solid rgba(49, 92, 76, .18);
+          border-top-color: #315c4c;
+          border-radius: 50%;
+          animation: reviewmoa-spin .85s linear infinite;
+        }
+        strong { display: block; font-size: 20px; }
+        p { min-height: 42px; margin: 10px 0 0; color: #756f65; font-size: 14px; line-height: 1.5; }
+        small { display: block; margin-top: 17px; color: #a39b90; font-size: 11px; }
+        @keyframes reviewmoa-spin { to { transform: rotate(360deg); } }
+      </style>
+      <div class="card">
+        <div class="spinner" aria-hidden="true"></div>
+        <strong>리뷰 수집 중…</strong>
+        <p></p>
+        <small>수집이 끝나면 리뷰모아로 자동으로 돌아갑니다.</small>
+      </div>
+    `;
+    document.documentElement.append(host);
+  }
+  updateCollectionOverlay(message);
+}
+
+function updateCollectionOverlay(message) {
+  const paragraph = document.getElementById(COLLECTION_OVERLAY_ID)
+    ?.shadowRoot
+    ?.querySelector("p");
+  if (paragraph && typeof message === "string" && message) {
+    paragraph.textContent = message;
+  }
+}
+
+function hideCollectionOverlay() {
+  document.getElementById(COLLECTION_OVERLAY_ID)?.remove();
 }
 
 function watchForOperatorCompletion(job, reason) {
@@ -622,6 +716,7 @@ function isConfirmedEmptyReviewArea() {
 }
 
 async function notifyProgress(job, progress) {
+  updateCollectionOverlay(progress.message);
   try {
     await chrome.runtime.sendMessage({
       type: "REVIEWMOA_COLLECTION_PROGRESS",
@@ -659,6 +754,8 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   extractRating,
   extractDate,
   findRatingControl,
+  hideCollectionOverlay,
   readVisibleReviews,
   selectLatestByRating,
+  showCollectionOverlay,
 });

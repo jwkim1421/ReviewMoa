@@ -91,9 +91,7 @@ export function createLocalReport(product: ProductIdentity, raw: RawReview[], pr
         checked: checked.length,
         included: accepted.length,
         excluded: checked.length - accepted.length,
-        summary: accepted.length
-          ? `${rating}점 최신 정상 리뷰 ${accepted.length}개를 확인했습니다.`
-          : `최근 ${rating}점 리뷰가 확인되지 않았습니다.`,
+        summary: `${rating}점 리뷰: ${accepted.length}개`,
         reviews: accepted.slice(0, 10),
       };
     }),

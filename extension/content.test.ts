@@ -27,6 +27,8 @@ type CollectorHooks = {
     classification: string;
     createdAt?: string;
   }>(reviews: T[]): T[];
+  showCollectionOverlay(message: string): void;
+  hideCollectionOverlay(): void;
 };
 
 let collector: CollectorHooks;
@@ -122,5 +124,22 @@ describe("review collector", () => {
       status: "waiting_for_user",
       reason: "captcha",
     });
+  });
+
+  it("covers the product page while reviews are being collected", () => {
+    collector.showCollectionOverlay("5점 리뷰를 확인하고 있어요.");
+
+    const overlay = document.querySelector("#reviewmoa-collection-overlay") as HTMLElement;
+    expect(overlay).toBeTruthy();
+    expect(overlay.shadowRoot?.querySelector("strong")?.textContent).toContain("리뷰 수집 중");
+    expect(overlay.shadowRoot?.querySelector("p")?.textContent).toBe(
+      "5점 리뷰를 확인하고 있어요.",
+    );
+    expect(overlay.shadowRoot?.textContent).toContain(
+      "수집이 끝나면 리뷰모아로 자동으로 돌아갑니다.",
+    );
+
+    collector.hideCollectionOverlay();
+    expect(document.querySelector("#reviewmoa-collection-overlay")).toBeNull();
   });
 });

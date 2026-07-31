@@ -277,6 +277,7 @@ h1 em { color: var(--orange); font-style: normal; }
 .rating-list { border-top: 1px solid #cfc8bc; }
 .rating-card { border-bottom: 1px solid #cfc8bc; }
 .rating-summary { width: 100%; padding: 22px 4px; display: grid; grid-template-columns: 80px 1fr auto; align-items: center; gap: 16px; border: 0; text-align: left; background: transparent; }
+.rating-summary:disabled { cursor: default; color: inherit; opacity: 1; }
 .rating-number { display: flex; align-items: center; gap: 5px; font-family: "Gowun Batang", serif; font-size: 31px; }
 .rating-number svg { color: var(--orange); }
 .rating-copy strong, .rating-copy small { display: block; }

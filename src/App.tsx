@@ -650,7 +650,7 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
             <p><strong>아쉬운 점</strong><span>{analysis.negative}</span></p>
             <p className="analysis-conclusion"><strong>결론</strong><span>{analysis.conclusion}</span></p>
           </div>
-          <p>정상 리뷰 {totalIncluded.toLocaleString()}개의 반복 의견을 바탕으로 정리했어요.</p>
+          <p>반복되는 정상 리뷰를 바탕으로 정리했어요.</p>
         </div>
         <div className="confidence">
           <div className="confidence-ring" style={{ "--score": `${report.confidence * 3.6}deg` } as React.CSSProperties}>
@@ -682,25 +682,41 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
           <p>의심 리뷰를 제외한 최신 리뷰를 별점별 최대 100개까지 반영합니다.</p>
         </div>
         <div className="rating-list">
-          {report.ratings.map((item) => (
-            <article className="rating-card" key={item.rating}>
-              <button className="rating-summary" onClick={() => setOpenRating(openRating === item.rating ? null : item.rating)}>
-                <span className="rating-number">{item.rating}<Star size={16} fill="currentColor" /></span>
-                <span className="rating-copy"><strong>{item.included === 0 ? `${item.rating}점 리뷰 0개` : item.summary}</strong><small>검사 {item.checked}개 · 선정 {item.included}개 · 제외 {item.excluded}개</small></span>
-                <span className="review-toggle">10개 리뷰 보기 <ChevronDown className={openRating === item.rating ? "rotated" : ""} size={18} /></span>
-              </button>
-              {openRating === item.rating && (
-                <div className="review-panel">
-                  {item.reviews.length ? item.reviews.slice(0, 10).map((review, index) => (
-                    <blockquote key={review.id}>
-                      <header><span>구매자 {String(index + 1).padStart(2, "0")}</span><time>{review.createdAt ? formatDate(review.createdAt).split(" 오전")[0].split(" 오후")[0] : "작성일 미상"}</time></header>
-                      <p>{review.content}</p>
-                    </blockquote>
-                  )) : <p className="empty-reviews">정상적으로 확인된 최근 {item.rating}점 리뷰가 없습니다.</p>}
-                </div>
-              )}
-            </article>
-          ))}
+          {report.ratings.map((item) => {
+            const visibleReviews = item.reviews.slice(0, 10);
+            const canOpen = visibleReviews.length > 0;
+            return (
+              <article className="rating-card" key={item.rating}>
+                <button
+                  className="rating-summary"
+                  disabled={!canOpen}
+                  onClick={() => canOpen && setOpenRating(openRating === item.rating ? null : item.rating)}
+                >
+                  <span className="rating-number">{item.rating}<Star size={16} fill="currentColor" /></span>
+                  <span className="rating-copy">
+                    <strong>{item.rating}점 리뷰: {item.included.toLocaleString()}개</strong>
+                    <small>검사 {item.checked}개 · 정상 {item.included}개 · 제외 {item.excluded}개</small>
+                  </span>
+                  {canOpen && (
+                    <span className="review-toggle">
+                      {visibleReviews.length}개 리뷰 보기
+                      <ChevronDown className={openRating === item.rating ? "rotated" : ""} size={18} />
+                    </span>
+                  )}
+                </button>
+                {canOpen && openRating === item.rating && (
+                  <div className="review-panel">
+                    {visibleReviews.map((review, index) => (
+                      <blockquote key={review.id}>
+                        <header><span>구매자 {String(index + 1).padStart(2, "0")}</span><time>{review.createdAt ? formatDate(review.createdAt).split(" 오전")[0].split(" 오후")[0] : "작성일 미상"}</time></header>
+                        <p>{review.content}</p>
+                      </blockquote>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </section>
 

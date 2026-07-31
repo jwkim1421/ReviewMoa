@@ -101,9 +101,7 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
         checked: ratingRows.length,
         included: accepted.length,
         excluded: ratingRows.length - accepted.length,
-        summary: accepted.length
-          ? `${rating}점 최신 정상 리뷰 ${accepted.length}개에서 반복 의견을 확인했습니다.`
-          : `최근 ${rating}점 리뷰가 확인되지 않았습니다.`,
+        summary: `${rating}점 리뷰: ${accepted.length}개`,
         reviews: accepted.slice(0, 10).map((review) => ({
           id: review.review_id,
           rating,
