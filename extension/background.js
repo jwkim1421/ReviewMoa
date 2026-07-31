@@ -35,16 +35,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "REVIEWMOA_PRODUCT_READY") {
-    chrome.storage.local.get(ACTIVE_KEY).then((state) => {
+    chrome.storage.local.get(ACTIVE_KEY).then(async (state) => {
       const job = state[ACTIVE_KEY];
-      const matchesTab = job?.tabId === sender.tab?.id;
+      const senderTabId = sender.tab?.id;
+      const matchesTab =
+        Number.isInteger(senderTabId) &&
+        (!Number.isInteger(job?.tabId) || job.tabId === senderTabId);
       if (
         job?.mode !== "mobile-handoff" ||
         !matchesTab ||
-        !allowedProductUrl(message.url)
+        !allowedProductUrl(message.url) ||
+        !sameProductUrl(job.url, message.url)
       ) {
         sendResponse({ job: null });
         return;
+      }
+      if (!Number.isInteger(job.tabId)) {
+        await chrome.storage.local.set({
+          [ACTIVE_KEY]: { ...job, tabId: senderTabId },
+        });
       }
       sendResponse({
         job: {
@@ -110,6 +119,18 @@ function allowedProductUrl(value) {
   }
 }
 
+function sameProductUrl(left, right) {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    const leftId = leftUrl.pathname.match(/\/(?:products|catalog)\/(\d+)/)?.[1];
+    const rightId = rightUrl.pathname.match(/\/(?:products|catalog)\/(\d+)/)?.[1];
+    return Boolean(leftId && leftId === rightId);
+  } catch {
+    return false;
+  }
+}
+
 async function startMobileHandoff(payload, returnTabId) {
   if (
     typeof payload?.jobId !== "string" ||
@@ -130,10 +151,19 @@ async function startMobileHandoff(payload, returnTabId) {
     returnTabId,
   };
   await chrome.storage.local.remove(RESULT_KEY);
-  const tab = await chrome.tabs.create({ url: "about:blank", active: true });
-  job.tabId = tab.id;
   await chrome.storage.local.set({ [ACTIVE_KEY]: job });
-  await chrome.tabs.update(tab.id, { url: payload.url });
+  try {
+    const tab = await chrome.tabs.create({ url: payload.url, active: true });
+    const state = await chrome.storage.local.get(ACTIVE_KEY);
+    if (state[ACTIVE_KEY]?.id === job.id && !Number.isInteger(state[ACTIVE_KEY].tabId)) {
+      await chrome.storage.local.set({
+        [ACTIVE_KEY]: { ...state[ACTIVE_KEY], tabId: tab.id },
+      });
+    }
+  } catch (error) {
+    await chrome.storage.local.set({ [ACTIVE_KEY]: null });
+    throw error;
+  }
   return { ok: true };
 }
 

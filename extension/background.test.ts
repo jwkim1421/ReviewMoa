@@ -89,12 +89,13 @@ describe("mobile Safari handoff background flow", () => {
     )).resolves.toEqual({ ok: true });
 
     expect(createTab).toHaveBeenCalledWith({
-      url: "about:blank",
+      url: "https://smartstore.naver.com/hiwell/products/5038692181",
       active: true,
     });
-    expect(updateTab).toHaveBeenCalledWith(17, {
-      url: "https://smartstore.naver.com/hiwell/products/5038692181",
-    });
+    expect(updateTab).not.toHaveBeenCalledWith(
+      17,
+      expect.objectContaining({ url: expect.any(String) }),
+    );
     expect(storage["reviewmoa.activeJob"]).toMatchObject({
       id: "11111111-1111-4111-8111-111111111111",
       operatorToken,
@@ -193,6 +194,32 @@ describe("mobile Safari handoff background flow", () => {
     expect(storage["reviewmoa.activeJob"]).toMatchObject({ reason: "captcha" });
     expect(updateTab).not.toHaveBeenCalled();
     expect(removeTab).not.toHaveBeenCalled();
+  });
+
+  it("binds a quickly loaded product page to a pending handoff without a tab id", async () => {
+    storage["reviewmoa.activeJob"] = {
+      id: "55555555-5555-4555-8555-555555555555",
+      operatorToken: "e".repeat(64),
+      url: "https://smartstore.naver.com/store/products/5038692181",
+      mode: "mobile-handoff",
+      returnTabId: 5,
+    };
+
+    await expect(sendMessage(
+      {
+        type: "REVIEWMOA_PRODUCT_READY",
+        url: "https://smartstore.naver.com/store/products/5038692181?from=mobile",
+      },
+      { tab: { id: 21 } },
+    )).resolves.toEqual({
+      job: {
+        id: "55555555-5555-4555-8555-555555555555",
+        url: "https://smartstore.naver.com/store/products/5038692181",
+        mode: "mobile-handoff",
+      },
+    });
+
+    expect(storage["reviewmoa.activeJob"]).toMatchObject({ tabId: 21 });
   });
 
   it("returns to ReviewMoa and records a readable error for non-security failures", async () => {
