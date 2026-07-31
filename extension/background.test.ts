@@ -11,6 +11,8 @@ let updatedListener: (tabId: number, changeInfo: { status?: string }) => Promise
 let storage: Record<string, unknown>;
 const createTab = vi.fn(async () => ({ id: 17 }));
 const sendTabMessage = vi.fn(async () => undefined);
+const updateTab = vi.fn(async () => undefined);
+const removeTab = vi.fn(async () => undefined);
 
 beforeAll(async () => {
   vi.stubGlobal("chrome", {
@@ -40,6 +42,8 @@ beforeAll(async () => {
     tabs: {
       create: createTab,
       sendMessage: sendTabMessage,
+      update: updateTab,
+      remove: removeTab,
       onUpdated: {
         addListener(listener: typeof updatedListener) {
           updatedListener = listener;
@@ -54,12 +58,14 @@ beforeEach(() => {
   storage = {};
   createTab.mockClear();
   sendTabMessage.mockClear();
+  updateTab.mockClear();
+  removeTab.mockClear();
   vi.restoreAllMocks();
 });
 
-function sendMessage(message: Record<string, unknown>) {
+function sendMessage(message: Record<string, unknown>, sender: unknown = {}) {
   return new Promise<unknown>((resolve) => {
-    messageListener(message, {}, resolve);
+    messageListener(message, sender, resolve);
   });
 }
 
@@ -70,14 +76,17 @@ describe("mobile Safari handoff background flow", () => {
       status: "failed",
       reviews: [{ content: "이전 수집 결과" }],
     };
-    await expect(sendMessage({
-      type: "REVIEWMOA_MOBILE_HANDOFF",
-      payload: {
-        jobId: "11111111-1111-4111-8111-111111111111",
-        operatorToken,
-        url: "https://smartstore.naver.com/hiwell/products/5038692181",
+    await expect(sendMessage(
+      {
+        type: "REVIEWMOA_MOBILE_HANDOFF",
+        payload: {
+          jobId: "11111111-1111-4111-8111-111111111111",
+          operatorToken,
+          url: "https://smartstore.naver.com/hiwell/products/5038692181",
+        },
       },
-    })).resolves.toEqual({ ok: true });
+      { tab: { id: 9 } },
+    )).resolves.toEqual({ ok: true });
 
     expect(createTab).toHaveBeenCalledWith({
       url: "https://smartstore.naver.com/hiwell/products/5038692181",
@@ -88,6 +97,7 @@ describe("mobile Safari handoff background flow", () => {
       operatorToken,
       mode: "mobile-handoff",
       tabId: 17,
+      returnTabId: 9,
     });
     expect(storage).not.toHaveProperty("reviewmoa.lastResult");
 
@@ -110,6 +120,7 @@ describe("mobile Safari handoff background flow", () => {
       url: "https://brand.naver.com/store/products/123",
       mode: "mobile-handoff",
       tabId: 18,
+      returnTabId: 8,
     };
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       status: "completed",
@@ -145,5 +156,64 @@ describe("mobile Safari handoff background flow", () => {
       reviewCount: 1,
     });
     expect(storage["reviewmoa.lastResult"]).not.toHaveProperty("reviews");
+    expect(updateTab).toHaveBeenCalledWith(8, { active: true });
+    expect(removeTab).toHaveBeenCalledWith(18);
+  });
+
+  it("keeps the Naver tab open only when the user must complete security verification", async () => {
+    storage["reviewmoa.activeJob"] = {
+      id: "33333333-3333-4333-8333-333333333333",
+      operatorToken: "c".repeat(64),
+      url: "https://brand.naver.com/store/products/123",
+      mode: "mobile-handoff",
+      tabId: 19,
+      returnTabId: 7,
+    };
+
+    await expect(sendMessage({
+      type: "REVIEWMOA_COLLECTION_RESULT",
+      payload: {
+        jobId: "33333333-3333-4333-8333-333333333333",
+        status: "waiting_for_user",
+        reason: "captcha",
+        message: "CAPTCHA를 직접 완료해 주세요.",
+      },
+    })).resolves.toEqual({ ok: true });
+
+    expect(storage["reviewmoa.activeJob"]).toMatchObject({ reason: "captcha" });
+    expect(updateTab).not.toHaveBeenCalled();
+    expect(removeTab).not.toHaveBeenCalled();
+  });
+
+  it("returns to ReviewMoa and records a readable error for non-security failures", async () => {
+    storage["reviewmoa.activeJob"] = {
+      id: "44444444-4444-4444-8444-444444444444",
+      operatorToken: "d".repeat(64),
+      url: "https://brand.naver.com/store/products/123",
+      mode: "mobile-handoff",
+      tabId: 20,
+      returnTabId: 6,
+    };
+
+    await expect(sendMessage({
+      type: "REVIEWMOA_COLLECTION_RESULT",
+      payload: {
+        jobId: "44444444-4444-4444-8444-444444444444",
+        status: "waiting_for_user",
+        reason: "reviews_not_extracted",
+        message: "리뷰 본문을 읽지 못했습니다.",
+        reviews: [{ content: "저장하면 안 되는 본문" }],
+      },
+    })).resolves.toEqual({ ok: true });
+
+    expect(storage["reviewmoa.activeJob"]).toBeNull();
+    expect(storage["reviewmoa.lastResult"]).toMatchObject({
+      reason: "reviews_not_extracted",
+      message: "리뷰 본문을 읽지 못했습니다.",
+      reviewCount: 1,
+    });
+    expect(storage["reviewmoa.lastResult"]).not.toHaveProperty("reviews");
+    expect(updateTab).toHaveBeenCalledWith(6, { active: true });
+    expect(removeTab).toHaveBeenCalledWith(20);
   });
 });

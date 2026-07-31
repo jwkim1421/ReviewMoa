@@ -1,11 +1,17 @@
 import type { ProductIdentity, RawReview } from "../domain/types";
 
 type ExtensionResult = {
+  jobId?: string;
   status: string;
   reason?: string;
   message?: string;
   product?: { name?: string; url?: string };
   reviews?: RawReview[];
+};
+
+export type MobileHandoffState = {
+  activeJob?: ExtensionResult & { id?: string };
+  result?: ExtensionResult;
 };
 
 function extensionRequest<T>(type: string, payload?: unknown, timeout = 1500): Promise<T> {
@@ -50,6 +56,10 @@ export async function startMobileHandoff(payload: {
     throw new Error(result?.error ?? "Safari 확장에서 상품 페이지를 열지 못했습니다.");
   }
   return result;
+}
+
+export function getMobileHandoffState() {
+  return extensionRequest<MobileHandoffState>("REVIEWMOA_GET_STATE");
 }
 
 export async function collectWithExtension(

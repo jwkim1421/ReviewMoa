@@ -2,6 +2,7 @@ import { REVIEWMOA_API_BASE } from "./runtime-config.js";
 
 const ACTIVE_KEY = "reviewmoa.activeJob";
 const RESULT_KEY = "reviewmoa.lastResult";
+const OPERATOR_REASONS = new Set(["captcha", "login_required", "access_limited"]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "REVIEWMOA_PING") {
@@ -17,7 +18,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "REVIEWMOA_MOBILE_HANDOFF") {
-    startMobileHandoff(message.payload)
+    startMobileHandoff(message.payload, sender.tab?.id)
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -86,7 +87,7 @@ function allowedProductUrl(value) {
   }
 }
 
-async function startMobileHandoff(payload) {
+async function startMobileHandoff(payload, returnTabId) {
   if (
     typeof payload?.jobId !== "string" ||
     !/^[a-f0-9-]{36}$/i.test(payload.jobId) ||
@@ -103,6 +104,7 @@ async function startMobileHandoff(payload) {
     mode: "mobile-handoff",
     status: "opening",
     createdAt: new Date().toISOString(),
+    returnTabId,
   };
   await chrome.storage.local.remove(RESULT_KEY);
   const tab = await chrome.tabs.create({ url: payload.url, active: true });
@@ -111,18 +113,32 @@ async function startMobileHandoff(payload) {
   return { ok: true };
 }
 
+async function returnToReviewMoa(job) {
+  if (Number.isInteger(job.returnTabId)) {
+    await chrome.tabs.update(job.returnTabId, { active: true }).catch(() => undefined);
+  }
+  if (Number.isInteger(job.tabId) && job.tabId !== job.returnTabId) {
+    await chrome.tabs.remove(job.tabId).catch(() => undefined);
+  }
+}
+
 async function handleMobileCollectionResult(job, result) {
   const storedResult = compactResult(result);
   if (!["completed", "partial"].includes(result.status)) {
-    return chrome.storage.local.set({
-      [ACTIVE_KEY]: {
-        ...job,
-        status: result.status,
-        reason: result.reason,
-        message: result.message,
-      },
+    const needsOperator = OPERATOR_REASONS.has(result.reason);
+    await chrome.storage.local.set({
+      [ACTIVE_KEY]: needsOperator
+        ? {
+            ...job,
+            status: result.status,
+            reason: result.reason,
+            message: result.message,
+          }
+        : null,
       [RESULT_KEY]: storedResult,
     });
+    if (!needsOperator) await returnToReviewMoa(job);
+    return;
   }
 
   const response = await fetch(
@@ -140,17 +156,20 @@ async function handleMobileCollectionResult(job, result) {
   );
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    return chrome.storage.local.set({
-      [ACTIVE_KEY]: {
-        ...job,
-        status: "waiting_for_user",
-        reason: payload.error ?? "mobile_upload_failed",
-        message: "리뷰 전송에 실패했습니다. 리뷰모아 화면에서 다시 시도해 주세요.",
-      },
-      [RESULT_KEY]: storedResult,
+    const failedResult = {
+      ...storedResult,
+      status: "failed",
+      reason: payload.error ?? "mobile_upload_failed",
+      message: "리뷰 전송에 실패했습니다. 다시 시도해 주세요.",
+    };
+    await chrome.storage.local.set({
+      [ACTIVE_KEY]: null,
+      [RESULT_KEY]: failedResult,
     });
+    await returnToReviewMoa(job);
+    return;
   }
-  return chrome.storage.local.set({
+  await chrome.storage.local.set({
     [ACTIVE_KEY]: null,
     [RESULT_KEY]: {
       ...storedResult,
@@ -158,6 +177,7 @@ async function handleMobileCollectionResult(job, result) {
       uploadedAt: new Date().toISOString(),
     },
   });
+  await returnToReviewMoa(job);
 }
 
 async function startJob(payload) {
@@ -187,6 +207,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       job: { id: job.id, url: job.url, mode: job.mode },
     });
   } catch {
+    if (job.mode === "mobile-handoff") {
+      await handleMobileCollectionResult(job, {
+        jobId: job.id,
+        status: "failed",
+        reason: "collector_unavailable",
+        message: "상품 페이지에서 리뷰모아 확장을 실행하지 못했습니다.",
+      });
+      return;
+    }
     await chrome.storage.local.set({
       [ACTIVE_KEY]: { ...job, status: "waiting_for_user", reason: "collector_unavailable" },
     });

@@ -20,7 +20,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { JobSnapshot, JobStatus, ProductIdentity, Report } from "./domain/types";
 import { ProductUrlError, resolveProductInput } from "./domain/url";
 import { createJob, getJob, refreshJob } from "./lib/api";
-import { startMobileHandoff } from "./lib/extension";
+import { getMobileHandoffState, startMobileHandoff } from "./lib/extension";
 
 const sources = ["네이버", "쿠팡", "컬리", "오늘의집", "11번가", "SSG닷컴", "G마켓"];
 type View = "home" | "probing" | "report" | "ideas";
@@ -92,6 +92,42 @@ export function App() {
       if (timer) window.clearTimeout(timer);
     };
   }, [jobId, view]);
+
+  useEffect(() => {
+    if (
+      view !== "probing" ||
+      !jobId ||
+      job?.status !== "waiting_for_operator"
+    ) return;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function inspectHandoff() {
+      try {
+        const state = await getMobileHandoffState();
+        if (cancelled) return;
+        const result = state.result;
+        const active = state.activeJob;
+        const matchesJob = result?.jobId === jobId || active?.id === jobId;
+        if (
+          matchesJob &&
+          result?.message &&
+          !["completed", "partial"].includes(result.status)
+        ) {
+          setHandoffError(result.message);
+        }
+      } catch {
+        // The extension may be unavailable on non-Safari clients.
+      }
+      if (!cancelled) timer = window.setTimeout(inspectHandoff, 1_500);
+    }
+
+    void inspectHandoff();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [job?.status, jobId, view]);
 
   function rememberJob(id: string, operatorToken?: string) {
     setJobId(id);
