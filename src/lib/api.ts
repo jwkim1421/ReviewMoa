@@ -23,6 +23,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (payload?.error === "JOB_NOT_FOUND") {
       throw new Error("저장된 작업을 찾지 못했습니다. 새로 요청해 주세요.");
     }
+    if (payload?.error === "TEMPORARY_DATABASE_ERROR") {
+      throw new Error("저장소 응답이 잠시 지연되고 있습니다. 잠시 후 다시 시도해 주세요.");
+    }
     throw new Error(payload?.error ?? "요청에 실패했습니다.");
   }
   return response.json() as Promise<T>;

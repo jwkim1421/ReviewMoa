@@ -34,12 +34,22 @@ function extensionRequest<T>(type: string, payload?: unknown, timeout = 1500): P
 }
 
 export async function hasCollectorExtension() {
-  try {
-    const result = await extensionRequest<{ installed: boolean }>("REVIEWMOA_PING");
-    return Boolean(result.installed);
-  } catch {
-    return false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const result = await extensionRequest<{ installed: boolean }>(
+        "REVIEWMOA_PING",
+        undefined,
+        2_500,
+      );
+      if (result.installed) return true;
+    } catch {
+      // Safari may need a moment to reconnect the extension after an app update.
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+    }
   }
+  return false;
 }
 
 export async function startMobileHandoff(payload: {

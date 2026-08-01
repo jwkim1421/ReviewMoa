@@ -161,7 +161,10 @@ export function App() {
       setProduct(resolved);
       setView("probing");
       setJob(undefined);
-      const useIphoneCollector = isIphoneSafari() && await hasCollectorExtension();
+      const useIphoneCollector = isIphoneSafari();
+      if (useIphoneCollector && !(await hasCollectorExtension())) {
+        throw new Error("리뷰모아 Safari 확장에 연결하지 못했습니다. Safari를 다시 연 뒤 확장 접근 권한을 확인해 주세요.");
+      }
       const created = await createJob(
         resolved,
         useIphoneCollector ? { collector: "ios-safari" } : undefined,
@@ -203,16 +206,19 @@ export function App() {
   async function refresh() {
     if (!jobId) return;
     setError("");
+    setHandoffStarting(true);
     try {
-      setView("probing");
-      setReport(undefined);
-      setJob(undefined);
-      const useIphoneCollector = isIphoneSafari() && await hasCollectorExtension();
+      const useIphoneCollector = isIphoneSafari();
+      if (useIphoneCollector && !(await hasCollectorExtension())) {
+        throw new Error("리뷰모아 Safari 확장에 연결하지 못했습니다. Safari를 다시 연 뒤 확장 접근 권한을 확인해 주세요.");
+      }
       const refreshed = await refreshJob(
         jobId,
         useIphoneCollector ? { collector: "ios-safari" } : undefined,
       );
       rememberJob(refreshed.id, refreshed.operatorToken);
+      setView("probing");
+      setReport(undefined);
       setJob({
         id: refreshed.id,
         status: refreshed.status,
@@ -227,7 +233,9 @@ export function App() {
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "리뷰를 다시 수집하지 못했습니다.");
-      setView("home");
+      setView(report ? "report" : "home");
+    } finally {
+      setHandoffStarting(false);
     }
   }
 

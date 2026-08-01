@@ -12,8 +12,10 @@ function createDb(options?: {
   changes?: number | ((sql: string, bindings: unknown[]) => number);
   first?: (sql: string, bindings: unknown[]) => unknown;
   rows?: (sql: string, bindings: unknown[]) => unknown[];
+  run?: (sql: string, bindings: unknown[], runCount: number) => unknown;
 }) {
   const statements: RecordedStatement[] = [];
+  let runCount = 0;
   const db = {
     prepare(sql: string) {
       const recorded = { sql, bindings: [] as unknown[] };
@@ -31,6 +33,9 @@ function createDb(options?: {
             : null;
         },
         async run() {
+          runCount += 1;
+          const custom = options?.run?.(sql, recorded.bindings, runCount);
+          if (custom !== undefined) return custom;
           const changes = typeof options?.changes === "function"
             ? options.changes(sql, recorded.bindings)
             : options?.changes ?? 1;
@@ -265,7 +270,7 @@ describe("collector queue API", () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({ status: "queued" });
     const insert = statements.find((statement) =>
-      statement.sql.includes("INSERT INTO jobs")
+      statement.sql.includes("INTO jobs")
     );
     expect(insert?.bindings[3]).toBe("queued");
     expect(insert?.sql).toContain("requested_at");
@@ -289,7 +294,7 @@ describe("collector queue API", () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({ status: "collecting" });
     const insert = statements.find((statement) =>
-      statement.sql.includes("INSERT INTO jobs")
+      statement.sql.includes("INTO jobs")
     );
     expect(insert?.bindings[3]).toBe("collecting");
     expect(insert?.bindings[9]).toBe("mobile-safari");
@@ -338,11 +343,60 @@ describe("collector queue API", () => {
       previousJobId: "job-old",
     });
     const insert = statements.find((statement) =>
-      statement.sql.includes("INSERT INTO jobs")
+      statement.sql.includes("INTO jobs")
     );
     expect(insert?.bindings[3]).toBe("collecting");
     expect(insert?.bindings[9]).toBe("mobile-safari");
     expect(insert?.bindings[13]).toBe("ios-safari");
+  });
+
+  it("retries a timed-out refresh insert without creating a second job", async () => {
+    const existingJob = {
+      id: "job-old",
+      cache_key: "naver:123:all",
+      product_json: JSON.stringify({ source: "naver", productId: "123" }),
+      status: "completed",
+      capability_json: null,
+      error_code: null,
+      progress_json: null,
+      interruption_reason: null,
+      requested_at: "2026-07-31T00:00:00.000Z",
+      started_at: null,
+      finished_at: "2026-07-31T00:01:00.000Z",
+      operator_token_hash: null,
+      operator_token_expires_at: null,
+      created_at: "2026-07-31T00:00:00.000Z",
+      updated_at: "2026-07-31T00:01:00.000Z",
+    };
+    let insertAttempts = 0;
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) return existingJob;
+      },
+      run(sql) {
+        if (!sql.includes("INSERT OR IGNORE INTO jobs")) return undefined;
+        insertAttempts += 1;
+        if (insertAttempts === 1) {
+          throw new Error("D1_ERROR: D1 DB storage operation exceeded timeout which caused object to be reset");
+        }
+        return { success: true, meta: { changes: 0 } };
+      },
+    });
+
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-old/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collector: "ios-safari" }),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(201);
+    expect(insertAttempts).toBe(2);
+    expect(statements.filter((statement) =>
+      statement.sql.includes("INSERT OR IGNORE INTO jobs")
+    )).toHaveLength(2);
   });
 
   it("starts and interrupts a mobile Safari collection with its operator token", async () => {
@@ -460,7 +514,7 @@ describe("collector queue API", () => {
       report: { id: "cached-job", cached: true },
     });
     expect(statements.some((statement) =>
-      statement.sql.includes("INSERT INTO jobs")
+      statement.sql.includes("INTO jobs")
     )).toBe(false);
   });
 
@@ -491,7 +545,7 @@ describe("collector queue API", () => {
       operatorToken: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(statements.some((statement) =>
-      statement.sql.includes("INSERT INTO jobs")
+      statement.sql.includes("INTO jobs")
     )).toBe(false);
   });
 

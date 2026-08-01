@@ -85,4 +85,14 @@ describe("queued job API client", () => {
 
     await expect(getJob("missing")).rejects.toThrow("저장된 작업을 찾지 못했습니다");
   });
+
+  it("hides internal D1 details behind a retryable user message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      Response.json({ error: "TEMPORARY_DATABASE_ERROR" }, { status: 500 })
+    ));
+
+    await expect(refreshJob("job-1", { collector: "ios-safari" })).rejects.toThrow(
+      "저장소 응답이 잠시 지연되고 있습니다",
+    );
+  });
 });

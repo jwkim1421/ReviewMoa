@@ -63,6 +63,24 @@ function addDays(days: number) {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
+function isTransientD1Error(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /D1_ERROR|storage operation exceeded timeout|object to be reset/i.test(message);
+}
+
+async function runIdempotentInsert(
+  db: D1Database,
+  sql: string,
+  bindings: unknown[],
+) {
+  try {
+    await db.prepare(sql).bind(...bindings).run();
+  } catch (error) {
+    if (!isTransientD1Error(error)) throw error;
+    await db.prepare(sql).bind(...bindings).run();
+  }
+}
+
 function createOperatorToken() {
   return `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
 }
@@ -788,28 +806,30 @@ async function handle(request: Request, env: AppEnv) {
           source: "ios-safari",
         })
       : null;
-    await env.DB.prepare(
-      `INSERT INTO jobs(
+    await runIdempotentInsert(
+      env.DB,
+      `INSERT OR IGNORE INTO jobs(
          id, cache_key, product_json, status, requested_at, created_at, updated_at,
          operator_token_hash, operator_token_expires_at, claimed_by, started_at,
          heartbeat_at, progress_json, handoff_source
        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      id,
-      key,
-      JSON.stringify(body.product),
-      status,
-      now,
-      now,
-      now,
-      operatorTokenHash,
-      operatorTokenExpiresAt,
-      mobileRequested ? "mobile-safari" : null,
-      mobileRequested ? now : null,
-      mobileRequested ? now : null,
-      progress,
-      mobileRequested ? "ios-safari" : null,
-    ).run();
+      [
+        id,
+        key,
+        JSON.stringify(body.product),
+        status,
+        now,
+        now,
+        now,
+        operatorTokenHash,
+        operatorTokenExpiresAt,
+        mobileRequested ? "mobile-safari" : null,
+        mobileRequested ? now : null,
+        mobileRequested ? now : null,
+        progress,
+        mobileRequested ? "ios-safari" : null,
+      ],
+    );
     return json({ id, status, operatorToken }, 201, origin);
   }
 
@@ -1182,28 +1202,30 @@ async function handle(request: Request, env: AppEnv) {
           source: "ios-safari",
         })
       : null;
-    await env.DB.prepare(
-      `INSERT INTO jobs(
+    await runIdempotentInsert(
+      env.DB,
+      `INSERT OR IGNORE INTO jobs(
          id, cache_key, product_json, status, requested_at, created_at, updated_at,
          operator_token_hash, operator_token_expires_at, claimed_by, started_at,
          heartbeat_at, progress_json, handoff_source
        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      id,
-      job.cache_key,
-      job.product_json,
-      status,
-      now,
-      now,
-      now,
-      operatorTokenHash,
-      addDays(MOBILE_TOKEN_TTL_DAYS),
-      mobileRequested ? "mobile-safari" : null,
-      mobileRequested ? now : null,
-      mobileRequested ? now : null,
-      progress,
-      mobileRequested ? "ios-safari" : null,
-    ).run();
+      [
+        id,
+        job.cache_key,
+        job.product_json,
+        status,
+        now,
+        now,
+        now,
+        operatorTokenHash,
+        addDays(MOBILE_TOKEN_TTL_DAYS),
+        mobileRequested ? "mobile-safari" : null,
+        mobileRequested ? now : null,
+        mobileRequested ? now : null,
+        progress,
+        mobileRequested ? "ios-safari" : null,
+      ],
+    );
     return json({
       id,
       status,
@@ -1221,7 +1243,8 @@ export default {
       return await handle(request, env);
     } catch (error) {
       const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-      return json({ error: message }, message === "INVALID_JSON" ? 400 : 500, allowedOrigin(request, env));
+      const publicMessage = isTransientD1Error(error) ? "TEMPORARY_DATABASE_ERROR" : message;
+      return json({ error: publicMessage }, message === "INVALID_JSON" ? 400 : 500, allowedOrigin(request, env));
     }
   },
 } satisfies ExportedHandler<AppEnv>;
