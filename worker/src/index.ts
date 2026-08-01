@@ -283,9 +283,6 @@ async function buildReport(
     report.confidenceReasons.push(
       "iPhone Safari에서 사용자가 보안 확인 후 수집한 공개 리뷰를 반영",
     );
-    report.limitations.push(
-      "iPhone에서 안정적으로 전송하기 위해 규칙 기반으로 즉시 분석했습니다.",
-    );
   }
 
   const provider = env.OPENROUTER_API_KEY ? "openrouter" : "openai";
@@ -300,6 +297,11 @@ async function buildReport(
     });
   } else if (!options?.skipAi && apiKey && rows.length) {
     report.limitations.push("오늘의 무료 AI 분석 한도에 도달해 규칙 기반 결과를 표시합니다.");
+  }
+  if (options?.mobileSafari && report.analysisProvider === "rules" && !report.limitations.some(
+    (item) => item.includes("규칙 기반"),
+  )) {
+    report.limitations.push("AI 분석을 사용할 수 없어 규칙 기반 결과를 표시합니다.");
   }
   return report;
 }
@@ -986,6 +988,7 @@ async function handle(request: Request, env: AppEnv) {
   if (request.method === "POST" && action === "mobile-complete") {
     const body = await readBody<{
       operatorToken?: unknown;
+      product?: unknown;
       reviews?: unknown;
       confirmedEmpty?: unknown;
       partialReason?: unknown;
@@ -1003,6 +1006,18 @@ async function handle(request: Request, env: AppEnv) {
     }
     if (body.partialReason !== undefined && body.partialReason !== "summary_only") {
       return json({ error: "INVALID_PARTIAL_REASON" }, 400, origin);
+    }
+    if (
+      body.product !== undefined &&
+      (
+        !body.product ||
+        typeof body.product !== "object" ||
+        typeof (body.product as { name?: unknown }).name !== "string" ||
+        !(body.product as { name: string }).name.trim() ||
+        (body.product as { name: string }).name.length > 300
+      )
+    ) {
+      return json({ error: "INVALID_PRODUCT_METADATA" }, 400, origin);
     }
 
     const now = new Date().toISOString();
@@ -1077,10 +1092,13 @@ async function handle(request: Request, env: AppEnv) {
          WHERE job_id = ?
          ORDER BY created_at DESC`,
       ).bind(jobId).all<StoredReview>()).results ?? [];
-      const report = await buildReport(env, jobId, claimed.product_json, rows, {
+      const product = JSON.parse(claimed.product_json) as Record<string, unknown>;
+      if (body.product && typeof body.product === "object") {
+        product.name = (body.product as { name: string }).name.trim();
+      }
+      const report = await buildReport(env, jobId, JSON.stringify(product), rows, {
         summaryOnly: body.partialReason === "summary_only",
         mobileSafari: true,
-        skipAi: true,
       });
       const finalStatus = rows.length && body.partialReason !== "summary_only"
         ? "completed"
@@ -1145,28 +1163,50 @@ async function handle(request: Request, env: AppEnv) {
   }
 
   if (request.method === "POST" && action === "refresh") {
+    const body = request.headers.get("Content-Type")
+      ? await readBody<{ collector?: unknown }>(request)
+      : {};
+    if (body.collector !== undefined && body.collector !== "ios-safari") {
+      return json({ error: "INVALID_COLLECTOR" }, 400, origin);
+    }
+    const mobileRequested = body.collector === "ios-safari";
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const operatorToken = createOperatorToken();
     const operatorTokenHash = await hashOperatorToken(operatorToken);
+    const status = mobileRequested ? "collecting" : "queued";
+    const progress = mobileRequested
+      ? JSON.stringify({
+          stage: "opening_product",
+          message: "iPhone Safari에서 상품 페이지를 열고 있어요.",
+          source: "ios-safari",
+        })
+      : null;
     await env.DB.prepare(
       `INSERT INTO jobs(
          id, cache_key, product_json, status, requested_at, created_at, updated_at,
-         operator_token_hash, operator_token_expires_at
-       ) VALUES(?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+         operator_token_hash, operator_token_expires_at, claimed_by, started_at,
+         heartbeat_at, progress_json, handoff_source
+       ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       job.cache_key,
       job.product_json,
+      status,
       now,
       now,
       now,
       operatorTokenHash,
       addDays(MOBILE_TOKEN_TTL_DAYS),
+      mobileRequested ? "mobile-safari" : null,
+      mobileRequested ? now : null,
+      mobileRequested ? now : null,
+      progress,
+      mobileRequested ? "ios-safari" : null,
     ).run();
     return json({
       id,
-      status: "queued",
+      status,
       operatorToken,
       previousJobId: jobId,
     }, 201, origin);

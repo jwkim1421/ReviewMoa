@@ -249,6 +249,7 @@ async function handleMobileCollectionResult(job, result) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         operatorToken: job.operatorToken,
+        product: result.product,
         reviews: result.reviews ?? [],
         confirmedEmpty: result.reason === "confirmed_zero_reviews",
         partialReason: result.partialReason,

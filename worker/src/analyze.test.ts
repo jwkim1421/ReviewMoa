@@ -55,6 +55,40 @@ describe("createReport sample notice", () => {
     expect(report.sampleNotice).toContain("정상 리뷰가 1개로 충분하지 않습니다.");
     expect(report.ratings.find(({ rating }) => rating === 5)?.reviews).toHaveLength(1);
   });
+
+  it("finds child engagement themes without treating a large book as an option mismatch", () => {
+    const rows: StoredReview[] = [
+      {
+        review_id: "toy-1",
+        rating: 5,
+        content: "아기가 혼자 눌러보고 그림보며 재미있게 잘 놀아요. 구성도 좋고 퀄리티가 좋아요.",
+        created_at: null,
+        option_name: null,
+        classification: "included",
+      },
+      {
+        review_id: "toy-2",
+        rating: 4,
+        content: "책이 생각보다 크고 무거워서 놀랐고 윗부분이 살짝 찢겨 있었어요.",
+        created_at: null,
+        option_name: null,
+        classification: "included",
+      },
+    ];
+    const report = createReport("job-toy", { name: "명화 사운드북" }, rows);
+
+    expect(report.strengths).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "아이의 관심과 만족", mentions: 1 }),
+      expect.objectContaining({ label: "콘텐츠와 구성", mentions: 1 }),
+      expect.objectContaining({ label: "품질과 마감", mentions: 1 }),
+    ]));
+    expect(report.cautions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "제품 손상", mentions: 1 }),
+      expect.objectContaining({ label: "크기와 무게", mentions: 1 }),
+      expect.objectContaining({ label: "옵션 차이", mentions: 0 }),
+    ]));
+    expect(report.analysis.negative).not.toContain("옵션 차이");
+  });
 });
 
 describe("AI fallback", () => {

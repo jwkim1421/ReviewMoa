@@ -207,13 +207,24 @@ export function App() {
       setView("probing");
       setReport(undefined);
       setJob(undefined);
-      const refreshed = await refreshJob(jobId);
+      const useIphoneCollector = isIphoneSafari() && await hasCollectorExtension();
+      const refreshed = await refreshJob(
+        jobId,
+        useIphoneCollector ? { collector: "ios-safari" } : undefined,
+      );
       rememberJob(refreshed.id, refreshed.operatorToken);
       setJob({
         id: refreshed.id,
         status: refreshed.status,
         product: refreshed.product ?? product!,
       });
+      if (useIphoneCollector && refreshed.operatorToken && product) {
+        await startMobileHandoff({
+          jobId: refreshed.id,
+          operatorToken: refreshed.operatorToken,
+          url: product.canonicalUrl,
+        });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "리뷰를 다시 수집하지 못했습니다.");
       setView("home");
@@ -744,10 +755,14 @@ function InsightList({
   items: Array<{ label: string; mentions: number; ratio: number }>;
   tone: "positive" | "caution";
 }) {
+  const mentionedItems = items.filter((item) => item.mentions > 0).slice(0, 3);
   return (
     <article className={`insight-card ${tone}`}>
       <span className="section-label">{title}</span>
-      {items.map((item, index) => (
+      {mentionedItems.length === 0 && (
+        <p className="empty-insights">확인된 표본에서 반복되는 의견이 아직 없어요.</p>
+      )}
+      {mentionedItems.map((item, index) => (
         <div className="insight-row" key={item.label}>
           <span className="rank">0{index + 1}</span>
           <div><strong>{item.label}</strong><small>{item.mentions}개 리뷰에서 언급 · {Math.round(item.ratio * 100)}%</small></div>

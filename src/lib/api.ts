@@ -52,8 +52,12 @@ export function getJob(jobId: string) {
   return request<JobSnapshot>(`/v1/jobs/${encodeURIComponent(jobId)}`);
 }
 
-export function refreshJob(jobId: string) {
+export function refreshJob(
+  jobId: string,
+  options?: { collector?: "ios-safari" },
+) {
   return request<CreateJobResult>(`/v1/jobs/${encodeURIComponent(jobId)}/refresh`, {
     method: "POST",
+    body: options ? JSON.stringify(options) : undefined,
   });
 }

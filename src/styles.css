@@ -263,6 +263,7 @@ h1 em { color: var(--orange); font-style: normal; }
 .insight-grid { margin: 28px 0 70px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .insight-card { padding: 28px; border: 1px solid #ddd6c9; border-radius: 18px; background: rgba(255,255,255,.5); }
 .insight-card.caution .section-label { color: #9b4330; }
+.empty-insights { margin: 22px 0 0; color: #8b8378; font-size: 13px; line-height: 1.6; }
 .insight-row { display: grid; grid-template-columns: 32px 1fr 80px; align-items: center; gap: 10px; padding-top: 20px; }
 .rank { color: #aaa196; font-size: 11px; font-weight: 800; }
 .insight-row strong, .insight-row small { display: block; }

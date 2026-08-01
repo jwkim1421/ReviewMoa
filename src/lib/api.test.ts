@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductIdentity } from "../domain/types";
 
 vi.stubEnv("VITE_API_BASE", "https://reviewmoa-api.test");
-const { createJob, getJob } = await import("./api");
+const { createJob, getJob, refreshJob } = await import("./api");
 
 const PRODUCT: ProductIdentity = {
   source: "naver",
@@ -61,6 +61,19 @@ describe("queued job API client", () => {
 
     await expect(getJob("job-1")).resolves.toMatchObject({
       id: "job-1",
+      status: "collecting",
+    });
+  });
+
+  it("refreshes an existing job with the iPhone collector", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ collector: "ios-safari" });
+      return Response.json({ id: "job-refresh", status: "collecting" }, { status: 201 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(refreshJob("job-1", { collector: "ios-safari" })).resolves.toMatchObject({
+      id: "job-refresh",
       status: "collecting",
     });
   });

@@ -296,6 +296,55 @@ describe("collector queue API", () => {
     expect(insert?.bindings[13]).toBe("ios-safari");
   });
 
+  it("refreshes a completed job directly into iPhone collection", async () => {
+    const existingJob = {
+      id: "job-old",
+      cache_key: "naver:123:all",
+      product_json: JSON.stringify({
+        source: "naver",
+        productId: "123",
+        canonicalUrl: "https://brand.naver.com/store/products/123",
+      }),
+      status: "completed",
+      capability_json: null,
+      error_code: null,
+      progress_json: null,
+      interruption_reason: null,
+      requested_at: "2026-07-31T00:00:00.000Z",
+      started_at: null,
+      finished_at: "2026-07-31T00:01:00.000Z",
+      operator_token_hash: null,
+      operator_token_expires_at: null,
+      created_at: "2026-07-31T00:00:00.000Z",
+      updated_at: "2026-07-31T00:01:00.000Z",
+    };
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) return existingJob;
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-old/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collector: "ios-safari" }),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "collecting",
+      previousJobId: "job-old",
+    });
+    const insert = statements.find((statement) =>
+      statement.sql.includes("INSERT INTO jobs")
+    );
+    expect(insert?.bindings[3]).toBe("collecting");
+    expect(insert?.bindings[9]).toBe("mobile-safari");
+    expect(insert?.bindings[13]).toBe("ios-safari");
+  });
+
   it("starts and interrupts a mobile Safari collection with its operator token", async () => {
     const operatorToken = "f".repeat(64);
     const job = {
@@ -790,7 +839,7 @@ describe("collector queue API", () => {
     expect(finish?.bindings[0]).toBe("partial");
   });
 
-  it("finishes an iPhone handoff without waiting for AI and allows a safe retry", async () => {
+  it("finishes an iPhone handoff with product metadata and safe rule fallback", async () => {
     const operatorToken = "a".repeat(64);
     const job = {
       id: "job-1",
@@ -843,6 +892,7 @@ describe("collector queue API", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             operatorToken,
+            product: { name: "테스트 상품 이름" },
             reviews: [{
               id: "review-1",
               rating: 5,
@@ -860,9 +910,10 @@ describe("collector queue API", () => {
         id: "job-1",
         status: "completed",
         report: {
+          product: { name: "테스트 상품 이름" },
           analysisProvider: "rules",
           limitations: expect.arrayContaining([
-            "iPhone에서 안정적으로 전송하기 위해 규칙 기반으로 즉시 분석했습니다.",
+            "오늘의 무료 AI 분석 한도에 도달해 규칙 기반 결과를 표시합니다.",
           ]),
         },
       });
