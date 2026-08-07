@@ -350,10 +350,10 @@ async function prepareReviewArea(config, job, waitTimeout = 5_000) {
     fullReviewDiagnostics.summaryDetected = hasOnlyNaverSummaryReviews(config);
   }
   if (!hasReviewArea) return false;
-  if (fullReviewDiagnostics?.summaryDetected) {
+  if (fullReviewDiagnostics) {
     await notifyProgress(job, {
       status: "collecting",
-      message: "대표 리뷰를 확인했습니다. 전체 리뷰 목록을 여는 중이에요.",
+      message: "전체 리뷰 목록을 확인하고 있어요.",
     });
     const fullListReady = await openFullNaverReviewList(config, waitTimeout);
     if (fullListReady) {
@@ -510,24 +510,27 @@ function describeFullReviewControl(control) {
   };
 }
 
-async function waitForFullNaverReviewList(config, timeout = 5_000) {
+async function waitForFullNaverReviewList(config, beforeSignature, beforeUrl, timeout = 5_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    const nodes = findReviewNodes(config);
-    if (nodes.length > 0 && !hasOnlyNaverSummaryReviews(config)) return true;
     await wait(200);
+    const afterSignature = reviewPageSignature(config);
+    if (location.href !== beforeUrl || (afterSignature && afterSignature !== beforeSignature)) {
+      return true;
+    }
   }
   return false;
 }
 
 async function openFullNaverReviewList(config, waitTimeout = 5_000) {
-  if (!hasOnlyNaverSummaryReviews(config)) return true;
   const controls = findFullNaverReviewControls();
   if (!controls.length) {
     if (fullReviewDiagnostics) fullReviewDiagnostics.failure = "control_not_found";
     return false;
   }
   for (const control of controls) {
+    const beforeSignature = reviewPageSignature(config);
+    const beforeUrl = location.href;
     if (control.tagName === "A") control.removeAttribute("target");
     const attempt = {
       ...describeFullReviewControl(control),
@@ -535,7 +538,8 @@ async function openFullNaverReviewList(config, waitTimeout = 5_000) {
     };
     fullReviewDiagnostics?.attempts.push(attempt);
     if (!attempt.activated) continue;
-    if (await waitForFullNaverReviewList(config, waitTimeout)) {
+    if (await waitForFullNaverReviewList(config, beforeSignature, beforeUrl, waitTimeout)) {
+      attempt.transitioned = true;
       if (fullReviewDiagnostics) {
         fullReviewDiagnostics.ready = true;
         fullReviewDiagnostics.endPath = location.pathname;

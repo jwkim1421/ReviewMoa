@@ -155,6 +155,35 @@ describe("review collector", () => {
     expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
   });
 
+  it("tries Naver full-list controls even when another review node confuses summary detection", async () => {
+    document.body.innerHTML = `
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+        <span>★ 5</span>
+        <p>대표 영역에 먼저 노출된 충분히 긴 리뷰 본문입니다.</p>
+      </article>
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.preview">
+        <span>별점 5점</span>
+        <p>초기 화면 판정을 흐리는 다른 리뷰 관련 노드입니다.</p>
+      </article>
+      <button data-shp-area="sprvsub.topreviewmore">리뷰 전체보기</button>
+    `;
+    const fullListButton = document.querySelector(
+      "button[data-shp-area='sprvsub.topreviewmore']",
+    )!;
+    fullListButton.addEventListener("click", () => {
+      document.body.innerHTML = `
+        <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
+          <span>★ 4</span>
+          <p>혼합 노드가 있어도 전체 목록에서 새로 확인한 충분히 긴 리뷰입니다.</p>
+        </article>
+      `;
+    });
+
+    expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
+    await expect(collector.openFullNaverReviewList(undefined, 1)).resolves.toBe(true);
+    expect(document.body.textContent).toContain("혼합 노드가 있어도");
+  });
+
   it("loads the review area before deciding whether Naver only exposed summary reviews", async () => {
     document.body.innerHTML = `<button id="review-tab">리뷰 12</button>`;
     document.querySelector("#review-tab")!.addEventListener("click", () => {
