@@ -4,6 +4,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type CollectorHooks = {
+  applyNaverNewestSort(): Promise<boolean>;
   detectInterruption(): {
     status: string;
     reason: string;
@@ -257,6 +258,53 @@ describe("review collector", () => {
 
     await expect(collector.openFullNaverReviewList(undefined, 1_100)).resolves.toBe(true);
     expect(clickCount).toBe(2);
+  });
+
+  it("accepts an iPhone full-review dialog even when desktop sort buttons are absent", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">iPhone 전체 리뷰 다이얼로그에서 확인한 충분히 긴 본문입니다.</p>
+        </article>
+      </section>
+    `;
+
+    await expect(collector.openFullNaverReviewList(undefined, 1)).resolves.toBe(true);
+  });
+
+  it("uses a non-button Naver newest-sort control rendered on iPhone", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <a data-shp-area="sprvarevlist_l.sortfilter" aria-selected="true">최신순정렬하기</a>
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">iPhone의 링크형 정렬 메뉴와 함께 표시된 충분히 긴 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+  });
+
+  it("opens the compact iPhone sort menu before selecting newest reviews", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <button data-shp-area="sprvarevlist_l.sortfilteropen">랭킹순</button>
+        <a data-shp-area="sprvarevlist_l.sortfilter" style="display:none">최신순정렬하기</a>
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">모바일 축약 정렬 메뉴와 함께 표시된 충분히 긴 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+    const opener = document.querySelector("[data-shp-area='sprvarevlist_l.sortfilteropen']")!;
+    const newest = document.querySelector("[data-shp-area='sprvarevlist_l.sortfilter']")!;
+    opener.addEventListener("click", () => newest.setAttribute("style", "display:block"));
+    newest.addEventListener("click", () => newest.setAttribute("aria-selected", "true"));
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+    expect(newest.getAttribute("aria-selected")).toBe("true");
   });
 
   it("tries Naver full-list controls even when another review node confuses summary detection", async () => {

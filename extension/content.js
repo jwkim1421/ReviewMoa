@@ -20,7 +20,7 @@ const MAX_SCANNED_WITHOUT_FILTER = 3000;
 const MAX_PAGE_ATTEMPTS = 40;
 const COLLECTION_OVERLAY_ID = "reviewmoa-collection-overlay";
 const NAVER_REVIEW_BODY_SELECTOR = "[data-shp-area='sprvarevlist_l.review']";
-const NAVER_SORT_SELECTOR = "button[data-shp-area='sprvarevlist_l.sortfilter']";
+const NAVER_SORT_SELECTOR = "[data-shp-area='sprvarevlist_l.sortfilter']";
 let operatorWatchTimer;
 let activeCollection;
 let fullReviewDiagnostics;
@@ -474,9 +474,10 @@ function findNaverReviewRoot() {
 }
 
 function isNaverFullReviewListReady() {
-  return findNaverReviewBodies().length > 0 && Boolean(
-    [...document.querySelectorAll(NAVER_SORT_SELECTOR)].find(isRenderedInActiveTree),
-  );
+  const bodies = findNaverReviewBodies();
+  if (!bodies.length) return false;
+  return bodies.some((body) => Boolean(body.closest("[role='dialog']"))) ||
+    Boolean([...document.querySelectorAll(NAVER_SORT_SELECTOR)].find(isRenderedInActiveTree));
 }
 
 async function revealNaverRatingDistribution() {
@@ -513,22 +514,49 @@ function readNaverRatingDistribution() {
 }
 
 async function applyNaverNewestSort() {
-  const controls = [...document.querySelectorAll(NAVER_SORT_SELECTOR)]
-    .filter(isRenderedInActiveTree);
-  const control = controls.find((element) => /최신순/.test(normalize(
-    element.getAttribute("aria-label") || element.textContent || "",
-  )));
-  if (!control) return false;
+  let control = findNaverNewestSortControl();
+  if (!control) {
+    const opener = [...document.querySelectorAll(
+      "[data-shp-area='sprvarevlist_l.sortfilteropen']",
+    )].find(isRenderedInActiveTree);
+    if (activateControl(opener)) {
+      await wait(300);
+      control = findNaverNewestSortControl();
+    }
+  }
+  if (!control) return visibleNaverReviewsAreNewestFirst();
   if (isSelectedControl(control)) return true;
   const before = naverReviewPageSignature();
   if (!activateControl(control)) return false;
+  await wait(100);
+  let current = findNaverNewestSortControl();
+  if (isSelectedControl(current)) return true;
   const changed = await waitForNaverReviewChange(before, 3_500);
-  const current = [...document.querySelectorAll(NAVER_SORT_SELECTOR)]
-    .filter(isRenderedInActiveTree)
-    .find((element) => /최신순/.test(normalize(
-      element.getAttribute("aria-label") || element.textContent || "",
-    )));
-  return isSelectedControl(current) || changed;
+  current = findNaverNewestSortControl();
+  return isSelectedControl(current) || changed || visibleNaverReviewsAreNewestFirst();
+}
+
+function findNaverNewestSortControl() {
+  const root = findNaverReviewRoot() || document.body;
+  return [...root.querySelectorAll(
+    `${NAVER_SORT_SELECTOR}, button, [role='button'], a, label`,
+  )].find((element) => {
+    if (!isRenderedInActiveTree(element)) return false;
+    const text = normalize(element.getAttribute("aria-label") || element.textContent || "");
+    return /^최신순(?:\s*정렬하기)?$/.test(text);
+  });
+}
+
+function visibleNaverReviewsAreNewestFirst() {
+  const dates = findNaverReviewBodies()
+    .map((body) => {
+      const card = findNaverReviewCard(body);
+      return card ? extractDate(card) : undefined;
+    })
+    .filter(Boolean);
+  return dates.length >= 2 && dates.every((date, index) =>
+    index === 0 || dates[index - 1].localeCompare(date) >= 0
+  );
 }
 
 function isSelectedControl(control) {
@@ -1351,6 +1379,7 @@ function wait(milliseconds) {
 
 globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   detectInterruption,
+  applyNaverNewestSort,
   extractContent,
   extractRating,
   extractDate,
