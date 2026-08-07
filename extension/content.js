@@ -17,7 +17,8 @@ const RATINGS = [5, 4, 3, 2, 1];
 const MAX_INCLUDED_PER_RATING = 100;
 const MAX_SCANNED_PER_RATING = 300;
 const MAX_SCANNED_WITHOUT_FILTER = 3000;
-const MAX_PAGE_ATTEMPTS = 40;
+const MAX_FULL_SCAN_WITHOUT_SORT = 1000;
+const MAX_PAGE_ATTEMPTS = 80;
 const COLLECTION_OVERLAY_ID = "reviewmoa-collection-overlay";
 const NAVER_REVIEW_BODY_SELECTOR = "[data-shp-area='sprvarevlist_l.review']";
 const NAVER_SORT_SELECTOR = "[data-shp-area='sprvarevlist_l.sortfilter']";
@@ -389,13 +390,23 @@ async function collectNaver(job, config, product) {
   }
   fullReviewDiagnostics.sourceDistribution = sourceDistribution;
 
-  await notifyProgress(job, {
-    status: "collecting",
-    message: "전체 리뷰를 최신순으로 정렬하고 있어요.",
-  });
-  const newestSortApplied = await applyNaverNewestSort();
   const sourceReviewCount = RATINGS.reduce((sum, rating) => sum + sourceDistribution[rating], 0);
-  const fullScanFallback = !newestSortApplied && sourceReviewCount <= MAX_SCANNED_WITHOUT_FILTER;
+  const collectionStrategy = chooseNaverCollectionStrategy(sourceDistribution);
+  const fullScanFallback = collectionStrategy === "full_scan";
+  let newestSortApplied = false;
+
+  if (fullScanFallback) {
+    fullReviewDiagnostics.sort = {
+      status: "skipped_for_verified_full_scan",
+      candidates: describeNaverSortCandidates(),
+    };
+  } else {
+    await notifyProgress(job, {
+      status: "collecting",
+      message: "전체 리뷰를 최신순으로 정렬하고 있어요.",
+    });
+    newestSortApplied = await applyNaverNewestSort();
+  }
   if (!newestSortApplied && !fullScanFallback) {
     fullReviewDiagnostics.failure = "newest_sort_not_verified";
     return {
@@ -409,7 +420,7 @@ async function collectNaver(job, config, product) {
   }
   if (fullScanFallback) {
     fullReviewDiagnostics.sortFallback = {
-      mode: "full_scan_then_local_date_sort",
+      mode: "direct_full_scan_then_local_date_sort",
       sourceReviewCount,
     };
     await notifyProgress(job, {
@@ -767,6 +778,10 @@ async function collectNaverPages(job, sourceDistribution, options = {}) {
   let scanned = 0;
   let stalled = 0;
 
+  if (fullReviewDiagnostics) {
+    fullReviewDiagnostics.collectionStart = describeNaverReviewBodyState();
+  }
+
   for (let page = 1; page <= MAX_PAGE_ATTEMPTS && scanned < MAX_SCANNED_WITHOUT_FILTER; page += 1) {
     const interruption = detectInterruption();
     if (interruption) return { reviews, scanned, interruption };
@@ -795,7 +810,29 @@ async function collectNaverPages(job, sourceDistribution, options = {}) {
     stalled = !advanced || after === before ? stalled + 1 : 0;
     if (stalled >= 2) break;
   }
+  if (fullReviewDiagnostics) {
+    fullReviewDiagnostics.collectionEnd = describeNaverReviewBodyState();
+  }
   return { reviews, scanned };
+}
+
+function chooseNaverCollectionStrategy(sourceDistribution) {
+  const sourceReviewCount = RATINGS.reduce(
+    (sum, rating) => sum + (sourceDistribution[rating] || 0),
+    0,
+  );
+  return sourceReviewCount <= MAX_FULL_SCAN_WITHOUT_SORT ? "full_scan" : "newest_sort";
+}
+
+function describeNaverReviewBodyState() {
+  const bodies = [...document.querySelectorAll(NAVER_REVIEW_BODY_SELECTOR)];
+  return {
+    rawBodyCount: bodies.length,
+    renderedBodyCount: bodies.filter(isRenderedInActiveTree).length,
+    dialogCount: [...document.querySelectorAll("[role='dialog']")]
+      .filter(isRenderedInActiveTree).length,
+    sortCandidates: describeNaverSortCandidates(),
+  };
 }
 
 function readVisibleNaverReviews(options) {
@@ -1577,6 +1614,7 @@ function wait(milliseconds) {
 globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   detectInterruption,
   applyNaverNewestSort,
+  chooseNaverCollectionStrategy,
   collectNaverPages,
   extractContent,
   extractRating,

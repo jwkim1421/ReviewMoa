@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type CollectorHooks = {
   applyNaverNewestSort(): Promise<boolean>;
+  chooseNaverCollectionStrategy(distribution: Record<number, number>): "full_scan" | "newest_sort";
   collectNaverPages(
     job: { id: string },
     distribution: Record<number, number>,
@@ -651,6 +652,43 @@ describe("review collector", () => {
       { id: "review-1", rating: 5 },
       { id: "review-2", rating: 5 },
     ]);
+  });
+
+  it("does not open the mobile sort menu when every review can be verified by a full scan", () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <button data-shp-area="sprvarevlist_l.sortfilteropen">랭킹순</button>
+        <article>
+          <span aria-label="별점 5점"></span>
+          <p data-shp-area="sprvarevlist_l.review">정렬 메뉴를 건드리지 않고 수집해야 하는 네이버 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+    const opener = document.querySelector<HTMLButtonElement>("[data-shp-area*='sortfilteropen']")!;
+    let clicks = 0;
+    opener.addEventListener("click", () => {
+      clicks += 1;
+      document.querySelector("[role='dialog']")?.setAttribute("aria-hidden", "true");
+    });
+
+    expect(collector.chooseNaverCollectionStrategy({
+      1: 1,
+      2: 2,
+      3: 9,
+      4: 33,
+      5: 398,
+    })).toBe("full_scan");
+    expect(clicks).toBe(0);
+  });
+
+  it("requires newest sort for a review set too large to scan completely", () => {
+    expect(collector.chooseNaverCollectionStrategy({
+      1: 20,
+      2: 30,
+      3: 100,
+      4: 300,
+      5: 2000,
+    })).toBe("newest_sort");
   });
 
   it("rejects the previously observed partial sample instead of publishing it", () => {
