@@ -884,6 +884,17 @@ function findNaverReviewCard(body) {
 }
 
 function extractNaverCardRating(card) {
+  const header = card.firstElementChild;
+  if (header) {
+    for (const element of [header, ...header.querySelectorAll("div, span, strong")]) {
+      if (!element.querySelector("svg")) continue;
+      const ownText = normalize([...element.childNodes]
+        .filter((node) => node.nodeType === 3)
+        .map((node) => node.textContent || "")
+        .join(" "));
+      if (/^[1-5]$/.test(ownText)) return Number(ownText);
+    }
+  }
   const clone = card.cloneNode(true);
   clone.querySelectorAll(NAVER_REVIEW_BODY_SELECTOR).forEach((node) => node.remove());
   return extractRating(clone);

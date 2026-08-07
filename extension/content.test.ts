@@ -517,6 +517,35 @@ describe("review collector", () => {
     expect(collector.validateNaverCollection(reviews, distribution!)).toEqual({ ok: true });
   });
 
+  it("reads Naver's bare rating text next to the star icon", () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <ul>
+          <li>
+            <div>
+              <div>
+                <div><svg aria-hidden="true"></svg>4<span><em>BEST</em></span></div>
+                <div><span>buyer****</span><span>26.05.08.</span></div>
+              </div>
+              <div
+                data-shp-area="sprvarevlist_l.review"
+                data-shp-contents-id="bare-four-star"
+              >별 SVG 옆 숫자만으로 표시된 실제 네이버 모바일 리뷰 본문입니다.</div>
+            </div>
+          </li>
+        </ul>
+      </section>
+    `;
+
+    const reviews = collector.readVisibleNaverReviews({
+      duplicateBodies: new Set(),
+      seenKeys: new Set(),
+    });
+
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ id: "bare-four-star", rating: 4 });
+  });
+
   it("reads the source rating distribution from the dialog header outside the inner review list", () => {
     document.body.innerHTML = `
       <section role="dialog">
