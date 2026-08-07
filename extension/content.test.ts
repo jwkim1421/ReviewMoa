@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url":"https://brand.naver.com/test/products/1"}
 
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -11,6 +12,7 @@ type CollectorHooks = {
   findFullNaverReviewControl(): Element | null;
   hasOnlyNaverSummaryReviews(config?: unknown): boolean;
   openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
+  prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
   extractRating(node: Element): number | null;
   readVisibleReviews(
     config: unknown,
@@ -151,6 +153,40 @@ describe("review collector", () => {
 
     await expect(collector.openFullNaverReviewList(undefined, 1)).resolves.toBe(true);
     expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
+  });
+
+  it("loads the review area before deciding whether Naver only exposed summary reviews", async () => {
+    document.body.innerHTML = `<button id="review-tab">리뷰 12</button>`;
+    document.querySelector("#review-tab")!.addEventListener("click", () => {
+      document.body.innerHTML = `
+        <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+          <span>★ 5</span>
+          <p>리뷰 탭을 연 뒤에 나타난 대표 리뷰의 충분히 긴 본문입니다.</p>
+        </article>
+        <a data-shp-area="sprvsub.rvmore">리뷰 1,204</a>
+        <button data-shp-area="sprvsub.topreviewmore">리뷰 전체보기</button>
+      `;
+      document
+        .querySelector("button[data-shp-area='sprvsub.topreviewmore']")!
+        .addEventListener("click", () => {
+          document.body.innerHTML = `
+            <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
+              <span>★ 4</span>
+              <p>전체 목록 버튼을 통해 확인한 새로운 리뷰의 충분히 긴 본문입니다.</p>
+            </article>
+          `;
+        });
+    });
+
+    await expect(
+      collector.prepareReviewArea(
+        { reviewTabSelectors: ["#review-tab"] },
+        { id: "ordering-regression" },
+        1,
+      ),
+    ).resolves.toBe(true);
+    expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
+    expect(document.body.textContent).toContain("전체 목록 버튼");
   });
 
   it("keeps at most one hundred included reviews per rating", () => {

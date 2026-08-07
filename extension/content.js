@@ -225,27 +225,7 @@ async function collect(job) {
 
   const config = globalThis.REVIEWMOA_GET_SITE_CONFIG?.();
   const product = readProduct();
-  fullReviewDiagnostics = isNaverPage()
-    ? {
-        summaryDetected: hasOnlyNaverSummaryReviews(config),
-        startPath: location.pathname,
-        attempts: [],
-      }
-    : undefined;
-  if (fullReviewDiagnostics?.summaryDetected) {
-    await notifyProgress(job, {
-      status: "collecting",
-      message: "대표 리뷰를 확인했습니다. 전체 리뷰 목록을 여는 중이에요.",
-    });
-    const fullListReady = await openFullNaverReviewList(config);
-    if (fullListReady) {
-      await notifyProgress(job, {
-        status: "collecting",
-        message: "전체 리뷰 목록을 열었습니다. 최신순으로 정리하고 있어요.",
-      });
-    }
-  }
-  const hasReviewArea = await ensureReviewArea(config);
+  const hasReviewArea = await prepareReviewArea(config, job);
   if (!hasReviewArea) {
     return {
       jobId: job.id,
@@ -254,6 +234,7 @@ async function collect(job) {
       message: "상품 페이지에서 리뷰 탭을 직접 연 뒤 ‘다시 확인’을 눌러 주세요.",
       product,
       capability: probeReviews(config),
+      collectorDiagnostics: fullReviewDiagnostics,
     };
   }
 
@@ -355,6 +336,34 @@ async function collect(job) {
     reviews,
     collectedAt: new Date().toISOString(),
   };
+}
+
+async function prepareReviewArea(config, job, waitTimeout = 5_000) {
+  fullReviewDiagnostics = isNaverPage()
+    ? {
+        startPath: location.pathname,
+        attempts: [],
+      }
+    : undefined;
+  const hasReviewArea = await ensureReviewArea(config);
+  if (fullReviewDiagnostics) {
+    fullReviewDiagnostics.summaryDetected = hasOnlyNaverSummaryReviews(config);
+  }
+  if (!hasReviewArea) return false;
+  if (fullReviewDiagnostics?.summaryDetected) {
+    await notifyProgress(job, {
+      status: "collecting",
+      message: "대표 리뷰를 확인했습니다. 전체 리뷰 목록을 여는 중이에요.",
+    });
+    const fullListReady = await openFullNaverReviewList(config, waitTimeout);
+    if (fullListReady) {
+      await notifyProgress(job, {
+        status: "collecting",
+        message: "전체 리뷰 목록을 열었습니다. 최신순으로 정리하고 있어요.",
+      });
+    }
+  }
+  return true;
 }
 
 async function collectPages(config, options) {
@@ -544,11 +553,12 @@ async function openFullNaverReviewList(config, waitTimeout = 5_000) {
 
 async function ensureReviewArea(config) {
   if (findReviewNodes(config).length) return true;
+  const before = reviewPageSignature(config);
   const clicked =
     activateFirst(config?.reviewTabSelectors) ||
     activateControl(findControlByText(/^(리뷰|후기|상품평|구매평)(\s*\(?[\d,]+\)?)?$/));
   if (clicked) {
-    await waitForReviewChange(config, reviewPageSignature(config), 3500);
+    await waitForReviewChange(config, before, 3500);
   }
   return findReviewNodes(config).length > 0 || /리뷰|후기|상품평|구매평/.test(document.body?.innerText || "");
 }
@@ -867,6 +877,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   hasOnlyNaverSummaryReviews,
   hideCollectionOverlay,
   openFullNaverReviewList,
+  prepareReviewArea,
   readVisibleReviews,
   selectLatestByRating,
   showCollectionOverlay,
