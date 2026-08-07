@@ -175,6 +175,62 @@ describe("review collector", () => {
     expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
   });
 
+  it("waits for a slowly rendered Naver full-review dialog on iPhone", async () => {
+    document.body.innerHTML = `
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+        <span>★ 5</span>
+        <p>대표 영역에 먼저 노출된 충분히 긴 리뷰 본문입니다.</p>
+      </article>
+      <button data-shp-area="sprvsub.topreviewmore">리뷰 전체보기</button>
+    `;
+    document
+      .querySelector("button[data-shp-area='sprvsub.topreviewmore']")!
+      .addEventListener("click", () => {
+        window.setTimeout(() => {
+          document.body.innerHTML = `
+            <section role="dialog">
+              <button data-shp-area="sprvarevlist_l.sortfilter">최신순 정렬하기</button>
+              <article data-shp-contents-type="review">
+                <span>★ 5</span>
+                <p data-shp-area="sprvarevlist_l.review">느린 모바일 렌더링 뒤 확인한 전체 리뷰의 충분히 긴 본문입니다.</p>
+              </article>
+            </section>
+          `;
+        }, 25);
+      });
+
+    await expect(collector.openFullNaverReviewList(undefined, 100)).resolves.toBe(true);
+  });
+
+  it("retries a Naver full-review button exposed before iPhone hydration completes", async () => {
+    document.body.innerHTML = `
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+        <span>★ 5</span>
+        <p>대표 영역에 먼저 노출된 충분히 긴 리뷰 본문입니다.</p>
+      </article>
+      <button data-shp-area="sprvsub.topreviewmore">리뷰 전체보기</button>
+    `;
+    let clickCount = 0;
+    document
+      .querySelector("button[data-shp-area='sprvsub.topreviewmore']")!
+      .addEventListener("click", () => {
+        clickCount += 1;
+        if (clickCount < 2) return;
+        document.body.innerHTML = `
+          <section role="dialog">
+            <button data-shp-area="sprvarevlist_l.sortfilter">최신순 정렬하기</button>
+            <article data-shp-contents-type="review">
+              <span>★ 4</span>
+              <p data-shp-area="sprvarevlist_l.review">두 번째 클릭에서 열린 전체 리뷰의 충분히 긴 본문입니다.</p>
+            </article>
+          </section>
+        `;
+      });
+
+    await expect(collector.openFullNaverReviewList(undefined, 1_100)).resolves.toBe(true);
+    expect(clickCount).toBe(2);
+  });
+
   it("tries Naver full-list controls even when another review node confuses summary detection", async () => {
     document.body.innerHTML = `
       <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">

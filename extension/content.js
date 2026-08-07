@@ -909,16 +909,26 @@ function describeFullReviewControl(control) {
   };
 }
 
-async function waitForFullNaverReviewList(config, beforeSignature, beforeUrl, timeout = 5_000) {
+async function waitForFullNaverReviewList(config, beforeSignature, beforeUrl, timeout = 12_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    await wait(200);
     if (isNaverFullReviewListReady()) return true;
+    await wait(Math.min(200, Math.max(deadline - Date.now(), 0)));
   }
-  return false;
+  return isNaverFullReviewListReady();
 }
 
-async function openFullNaverReviewList(config, waitTimeout = 5_000) {
+function describeNaverFullReviewState() {
+  return {
+    bodyCount: findNaverReviewBodies().length,
+    sortCount: [...document.querySelectorAll(NAVER_SORT_SELECTOR)]
+      .filter(isRenderedInActiveTree).length,
+    dialogCount: [...document.querySelectorAll("[role='dialog']")]
+      .filter(isRenderedInActiveTree).length,
+  };
+}
+
+async function openFullNaverReviewList(config, waitTimeout = 12_000) {
   if (isNaverFullReviewListReady()) {
     if (fullReviewDiagnostics) fullReviewDiagnostics.ready = true;
     return true;
@@ -928,23 +938,65 @@ async function openFullNaverReviewList(config, waitTimeout = 5_000) {
     if (fullReviewDiagnostics) fullReviewDiagnostics.failure = "control_not_found";
     return false;
   }
-  for (const control of controls) {
+  for (const [index, control] of controls.entries()) {
     const beforeSignature = reviewPageSignature(config);
     const beforeUrl = location.href;
     if (control.tagName === "A") control.removeAttribute("target");
     const attempt = {
       ...describeFullReviewControl(control),
+      before: describeNaverFullReviewState(),
       activated: activateControl(control),
     };
     fullReviewDiagnostics?.attempts.push(attempt);
     if (!attempt.activated) continue;
-    if (await waitForFullNaverReviewList(config, beforeSignature, beforeUrl, waitTimeout)) {
+    const firstWait = index === 0 && waitTimeout >= 1_000
+      ? Math.min(Math.floor(waitTimeout / 2), 2_500)
+      : waitTimeout;
+    if (await waitForFullNaverReviewList(config, beforeSignature, beforeUrl, firstWait)) {
       attempt.transitioned = true;
+      attempt.after = describeNaverFullReviewState();
       if (fullReviewDiagnostics) {
         fullReviewDiagnostics.ready = true;
         fullReviewDiagnostics.endPath = location.pathname;
       }
       return true;
+    }
+    attempt.after = describeNaverFullReviewState();
+
+    // iPhone Safari can expose the button before Naver finishes hydrating its click handler.
+    // Re-query the live DOM and retry once instead of keeping a stale pre-hydration element.
+    if (index === 0 && waitTimeout > firstWait) {
+      const area = control.getAttribute("data-shp-area");
+      const freshControl = area
+        ? [...document.querySelectorAll(`[data-shp-area='${area}']`)].find(isUsable)
+        : findFullNaverReviewControls()[0];
+      if (freshControl && !isNaverFullReviewListReady()) {
+        const retry = {
+          ...describeFullReviewControl(freshControl),
+          retry: true,
+          before: describeNaverFullReviewState(),
+          activated: activateControl(freshControl),
+        };
+        fullReviewDiagnostics?.attempts.push(retry);
+        if (
+          retry.activated &&
+          await waitForFullNaverReviewList(
+            config,
+            reviewPageSignature(config),
+            location.href,
+            waitTimeout - firstWait,
+          )
+        ) {
+          retry.transitioned = true;
+          retry.after = describeNaverFullReviewState();
+          if (fullReviewDiagnostics) {
+            fullReviewDiagnostics.ready = true;
+            fullReviewDiagnostics.endPath = location.pathname;
+          }
+          return true;
+        }
+        retry.after = describeNaverFullReviewState();
+      }
     }
   }
   if (fullReviewDiagnostics) {

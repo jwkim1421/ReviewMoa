@@ -207,7 +207,8 @@ h1 em { color: var(--orange); font-style: normal; }
 .probe-list { margin-top: 44px; border-top: 1px solid #d8d2c6; }
 .probe-item { display: flex; gap: 15px; padding: 20px 4px; border-bottom: 1px solid #d8d2c6; opacity: .42; }
 .probe-item.active, .probe-item.done { opacity: 1; }
-.probe-item > span { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #c9c3b7; border-radius: 50%; font-size: 12px; }
+.probe-item > span { width: 32px; height: 32px; min-width: 32px; flex: 0 0 32px; box-sizing: border-box; display: grid; place-items: center; align-self: flex-start; border: 1px solid #c9c3b7; border-radius: 50%; font-size: 12px; line-height: 0; }
+.probe-item > span svg { display: block; margin: auto; flex: none; }
 .probe-item.done > span { color: white; border-color: var(--green); background: var(--green); }
 .probe-item.active > span { color: var(--orange); border-color: var(--orange); }
 .probe-item.waiting { opacity: 1; }
