@@ -465,6 +465,8 @@ function findNaverReviewBodies() {
 function findNaverReviewRoot() {
   const first = findNaverReviewBodies()[0];
   if (!first) return null;
+  const dialog = first.closest("[role='dialog']");
+  if (dialog) return dialog;
   let current = first.parentElement;
   while (current && current !== document.body) {
     if (current.querySelector(NAVER_SORT_SELECTOR)) return current;
@@ -481,36 +483,104 @@ function isNaverFullReviewListReady() {
 }
 
 async function revealNaverRatingDistribution() {
-  if (readNaverRatingDistribution()) return true;
-  const control = [...document.querySelectorAll("button, [role='button']")].find((element) =>
-    isRenderedInActiveTree(element) && /평점\s*비율\s*보기/.test(normalize(
+  const before = readNaverRatingDistribution();
+  if (before) {
+    recordNaverDistributionDiagnostics({ status: "already_visible", distribution: before });
+    return true;
+  }
+  const candidates = [...document.querySelectorAll("button, [role='button'], a")]
+    .filter(isRenderedInActiveTree)
+    .filter((element) => /평점\s*비율\s*보기|만족도/.test(normalize(
       element.getAttribute("aria-label") || element.textContent || "",
-    ))
-  );
+    )));
+  const control = candidates.find((element) => /평점\s*비율\s*보기/.test(normalize(
+    element.getAttribute("aria-label") || element.textContent || "",
+  ))) || candidates[0];
+  recordNaverDistributionDiagnostics({
+    status: control ? "control_found" : "control_not_found",
+    controls: candidates.slice(0, 8).map(describeNaverDistributionElement),
+    visibleTexts: describeNaverDistributionTexts(),
+  });
   if (!activateControl(control)) return false;
-  await wait(400);
-  return Boolean(readNaverRatingDistribution());
+
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    const distribution = readNaverRatingDistribution();
+    if (distribution) {
+      recordNaverDistributionDiagnostics({ status: "revealed", distribution });
+      return true;
+    }
+    await wait(Math.min(150, Math.max(deadline - Date.now(), 0)));
+  }
+  recordNaverDistributionDiagnostics({
+    status: "reveal_timeout",
+    visibleTexts: describeNaverDistributionTexts(),
+  });
+  return false;
 }
 
 function readNaverRatingDistribution() {
-  const root = findNaverReviewRoot() || document.body;
-  const elements = [...root.querySelectorAll("button, [role='button'], li, div")]
-    .filter(isRenderedInActiveTree);
+  const roots = [
+    findNaverReviewRoot(),
+    ...document.querySelectorAll("[role='dialog']"),
+    document.body,
+  ].filter((root, index, all) => root && all.indexOf(root) === index && isRenderedInActiveTree(root));
+  const elements = roots.flatMap((root) => [
+    root,
+    ...root.querySelectorAll("button, [role='button'], li, div, span, p, strong"),
+  ]).filter((element, index, all) =>
+    all.indexOf(element) === index && isRenderedInActiveTree(element)
+  );
   const distribution = {};
   for (const rating of RATINGS) {
-    const pattern = new RegExp(`^${rating}점(?:\\s*\\([^)]*\\))?\\s*([\\d,]+)건$`);
+    const pattern = new RegExp(`^${rating}점(?:\\s*\\([^)]*\\))?\\s*([\\d,]+)\\s*건$`);
+    const labelPattern = new RegExp(`^${rating}점(?:\\s*\\([^)]*\\))?$`);
     for (const element of elements) {
       const text = normalize(element.getAttribute("aria-label") || element.textContent || "");
       if (text.length > 80) continue;
       const match = text.match(pattern);
-      if (!match) continue;
-      distribution[rating] = Number(match[1].replaceAll(",", ""));
-      break;
+      if (match) {
+        distribution[rating] = Number(match[1].replaceAll(",", ""));
+        break;
+      }
+      if (!labelPattern.test(text) || !element.nextElementSibling) continue;
+      const countText = normalize(element.nextElementSibling.textContent || "");
+      const countMatch = countText.match(/^([\d,]+)\s*건$/);
+      if (countMatch) {
+        distribution[rating] = Number(countMatch[1].replaceAll(",", ""));
+        break;
+      }
     }
   }
   if (!RATINGS.every((rating) => Number.isInteger(distribution[rating]))) return null;
   if (RATINGS.reduce((sum, rating) => sum + distribution[rating], 0) <= 0) return null;
   return distribution;
+}
+
+function describeNaverDistributionElement(element) {
+  return {
+    tag: element.tagName,
+    area: element.getAttribute("data-shp-area") || undefined,
+    label: normalize(element.getAttribute("aria-label") || element.textContent || "").slice(0, 100),
+  };
+}
+
+function describeNaverDistributionTexts() {
+  return [...document.querySelectorAll("button, [role='button'], li, div, span, p, strong")]
+    .filter(isRenderedInActiveTree)
+    .map((element) => normalize(element.getAttribute("aria-label") || element.textContent || ""))
+    .filter((text) => /^\d점|평점\s*비율|만족도/.test(text) && text.length <= 100)
+    .slice(0, 20);
+}
+
+function recordNaverDistributionDiagnostics(details) {
+  if (!fullReviewDiagnostics) return;
+  fullReviewDiagnostics.distribution = {
+    ...(fullReviewDiagnostics.distribution || {}),
+    ...details,
+    dialogCount: [...document.querySelectorAll("[role='dialog']")]
+      .filter(isRenderedInActiveTree).length,
+  };
 }
 
 async function applyNaverNewestSort() {
@@ -1390,6 +1460,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   openFullNaverReviewList,
   prepareReviewArea,
   readNaverRatingDistribution,
+  revealNaverRatingDistribution,
   readVisibleNaverReviews,
   readVisibleReviews,
   selectLatestByRating,

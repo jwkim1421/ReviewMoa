@@ -15,6 +15,7 @@ type CollectorHooks = {
   openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
   prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
   readNaverRatingDistribution(): Record<number, number> | null;
+  revealNaverRatingDistribution(): Promise<boolean>;
   readVisibleNaverReviews(options: {
     duplicateBodies: Set<string>;
     seenKeys: Set<string>;
@@ -414,6 +415,64 @@ describe("review collector", () => {
       { id: "four-star-review", rating: 4 },
     ]);
     expect(collector.validateNaverCollection(reviews, distribution!)).toEqual({ ok: true });
+  });
+
+  it("reads the source rating distribution from the dialog header outside the inner review list", () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <header>
+          <span>5점 (최고예요)</span><strong>100건</strong>
+          <span>4점 (좋아요)</span><strong>4건</strong>
+          <span>3점 (괜찮아요)</span><strong>2건</strong>
+          <span>2점 (그저 그래요)</span><strong>0건</strong>
+          <span>1점 (별로예요)</span><strong>0건</strong>
+        </header>
+        <div>
+          <button data-shp-area="sprvarevlist_l.sortfilter">최신순 정렬하기</button>
+          <p data-shp-area="sprvarevlist_l.review">안쪽 리뷰 목록보다 바깥에 별점 분포가 있는 모바일 구조입니다.</p>
+        </div>
+      </section>
+    `;
+
+    expect(collector.readNaverRatingDistribution()).toEqual({
+      1: 0,
+      2: 0,
+      3: 2,
+      4: 4,
+      5: 100,
+    });
+  });
+
+  it("waits for a separately rendered rating distribution dialog", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <button id="rating-distribution">평점 비율 보기</button>
+        <button data-shp-area="sprvarevlist_l.sortfilter">최신순 정렬하기</button>
+        <p data-shp-area="sprvarevlist_l.review">별점 분포 팝업이 늦게 열리는 모바일 구조를 재현합니다.</p>
+      </section>
+    `;
+    document.querySelector("#rating-distribution")!.addEventListener("click", () => {
+      setTimeout(() => {
+        document.body.insertAdjacentHTML("beforeend", `
+          <aside role="dialog">
+            <div>5점 (최고예요) 100건</div>
+            <div>4점 (좋아요) 4건</div>
+            <div>3점 (괜찮아요) 2건</div>
+            <div>2점 (그저 그래요) 0건</div>
+            <div>1점 (별로예요) 0건</div>
+          </aside>
+        `);
+      }, 500);
+    });
+
+    await expect(collector.revealNaverRatingDistribution()).resolves.toBe(true);
+    expect(collector.readNaverRatingDistribution()).toEqual({
+      1: 0,
+      2: 0,
+      3: 2,
+      4: 4,
+      5: 100,
+    });
   });
 
   it("rejects a Naver collection that contradicts the source rating distribution", () => {
