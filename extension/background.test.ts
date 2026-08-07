@@ -246,6 +246,31 @@ describe("mobile Safari handoff background flow", () => {
     expect(storage["reviewmoa.activeJob"]).toMatchObject({ tabId: 21 });
   });
 
+  it("resumes the same mobile job after navigating to Naver's full review route", async () => {
+    storage["reviewmoa.activeJob"] = {
+      id: "66666666-6666-4666-8666-666666666666",
+      operatorToken: "f".repeat(64),
+      url: "https://brand.naver.com/store/products/123",
+      mode: "mobile-handoff",
+      tabId: 22,
+      returnTabId: 6,
+    };
+
+    await expect(sendMessage(
+      {
+        type: "REVIEWMOA_PRODUCT_READY",
+        url: "https://brand.naver.com/store/products/123/reviews?sort=RECENT",
+      },
+      { tab: { id: 22 } },
+    )).resolves.toEqual({
+      job: {
+        id: "66666666-6666-4666-8666-666666666666",
+        url: "https://brand.naver.com/store/products/123",
+        mode: "mobile-handoff",
+      },
+    });
+  });
+
   it("returns to ReviewMoa and records a readable error for non-security failures", async () => {
     storage["reviewmoa.activeJob"] = {
       id: "44444444-4444-4444-8444-444444444444",

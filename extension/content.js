@@ -224,6 +224,19 @@ async function collect(job) {
 
   const config = globalThis.REVIEWMOA_GET_SITE_CONFIG?.();
   const product = readProduct();
+  if (isNaverPage() && hasOnlyNaverSummaryReviews(config)) {
+    await notifyProgress(job, {
+      status: "collecting",
+      message: "대표 리뷰를 확인했습니다. 전체 리뷰 목록을 여는 중이에요.",
+    });
+    const fullListReady = await openFullNaverReviewList(config);
+    if (fullListReady) {
+      await notifyProgress(job, {
+        status: "collecting",
+        message: "전체 리뷰 목록을 열었습니다. 최신순으로 정리하고 있어요.",
+      });
+    }
+  }
   const hasReviewArea = await ensureReviewArea(config);
   if (!hasReviewArea) {
     return {
@@ -433,6 +446,46 @@ function countIncluded(reviews) {
   return reviews.filter((review) => ["included", "uncertain"].includes(review.classification)).length;
 }
 
+function isNaverPage() {
+  return location.hostname === "naver.com" || location.hostname.endsWith(".naver.com");
+}
+
+function hasOnlyNaverSummaryReviews(config) {
+  const nodes = findReviewNodes(config);
+  return nodes.length > 0 && nodes.every((node) =>
+    node.getAttribute("data-shp-area") === "sprvsub.topreview"
+  );
+}
+
+function findFullNaverReviewControl() {
+  return firstUsable([
+    "a[data-shp-area='sprvsub.rvmore']",
+    "button[data-shp-area='sprvsub.topreviewmore']",
+    "a[data-shp-area='sprvsub.topreviewmore']",
+  ]) || findControlByText(
+    /^(?:리뷰|쇼핑몰리뷰)\s*[\d,]+$|^(?:리뷰|전체 리뷰)\s*(?:전체)?보기$/,
+  );
+}
+
+async function waitForFullNaverReviewList(config, timeout = 5_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const nodes = findReviewNodes(config);
+    if (nodes.length > 0 && !hasOnlyNaverSummaryReviews(config)) return true;
+    await wait(200);
+  }
+  return false;
+}
+
+async function openFullNaverReviewList(config) {
+  if (!hasOnlyNaverSummaryReviews(config)) return true;
+  const control = findFullNaverReviewControl();
+  if (!control) return false;
+  if (control.tagName === "A") control.removeAttribute("target");
+  if (!activateControl(control)) return false;
+  return waitForFullNaverReviewList(config);
+}
+
 async function ensureReviewArea(config) {
   if (findReviewNodes(config).length) return true;
   const clicked =
@@ -536,7 +589,7 @@ function activateControl(control) {
     return true;
   }
   if (control.tagName === "SELECT") return false;
-  control.scrollIntoView({ block: "center", behavior: "auto" });
+  control.scrollIntoView?.({ block: "center", behavior: "auto" });
   control.click();
   return true;
 }
@@ -753,8 +806,11 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   extractContent,
   extractRating,
   extractDate,
+  findFullNaverReviewControl,
   findRatingControl,
+  hasOnlyNaverSummaryReviews,
   hideCollectionOverlay,
+  openFullNaverReviewList,
   readVisibleReviews,
   selectLatestByRating,
   showCollectionOverlay,

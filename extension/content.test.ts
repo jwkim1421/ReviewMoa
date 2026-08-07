@@ -8,6 +8,9 @@ type CollectorHooks = {
     reason: string;
     message: string;
   } | null;
+  findFullNaverReviewControl(): Element | null;
+  hasOnlyNaverSummaryReviews(config?: unknown): boolean;
+  openFullNaverReviewList(config?: unknown): Promise<boolean>;
   extractRating(node: Element): number | null;
   readVisibleReviews(
     config: unknown,
@@ -98,6 +101,31 @@ describe("review collector", () => {
         classification: "included",
       }),
     ]);
+  });
+
+  it("opens Naver's full review list instead of stopping at representative reviews", async () => {
+    document.body.innerHTML = `
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+        <span>★ 5</span>
+        <p>대표 영역에 먼저 노출된 충분히 긴 리뷰 본문입니다.</p>
+      </article>
+      <a data-shp-area="sprvsub.rvmore" target="_blank">리뷰 6,003</a>
+    `;
+    const control = collector.findFullNaverReviewControl() as HTMLAnchorElement;
+    control.addEventListener("click", (event) => {
+      event.preventDefault();
+      document.body.innerHTML = `
+        <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
+          <span>★ 4</span>
+          <p>전체 리뷰 목록에서 새로 확인한 충분히 긴 리뷰 본문입니다.</p>
+        </article>
+      `;
+    });
+
+    expect(collector.hasOnlyNaverSummaryReviews()).toBe(true);
+    await expect(collector.openFullNaverReviewList()).resolves.toBe(true);
+    expect(control.hasAttribute("target")).toBe(false);
+    expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
   });
 
   it("keeps at most one hundred included reviews per rating", () => {
