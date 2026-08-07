@@ -202,6 +202,34 @@ describe("review collector", () => {
     await expect(collector.openFullNaverReviewList(undefined, 100)).resolves.toBe(true);
   });
 
+  it("waits for Naver to lazy-render the full-review button on iPhone", async () => {
+    document.body.innerHTML = `
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+        <span>★ 5</span>
+        <p>대표 영역은 보이지만 전체보기 버튼은 아직 로드되지 않았습니다.</p>
+      </article>
+    `;
+    window.setTimeout(() => {
+      const button = document.createElement("button");
+      button.setAttribute("data-shp-area", "sprvsub.topreviewmore");
+      button.textContent = "리뷰 전체보기";
+      button.addEventListener("click", () => {
+        document.body.innerHTML = `
+          <section role="dialog">
+            <button data-shp-area="sprvarevlist_l.sortfilter">최신순 정렬하기</button>
+            <article data-shp-contents-type="review">
+              <span>★ 4</span>
+              <p data-shp-area="sprvarevlist_l.review">지연 로딩된 버튼으로 확인한 충분히 긴 전체 리뷰 본문입니다.</p>
+            </article>
+          </section>
+        `;
+      });
+      document.body.append(button);
+    }, 25);
+
+    await expect(collector.openFullNaverReviewList(undefined, 150)).resolves.toBe(true);
+  });
+
   it("retries a Naver full-review button exposed before iPhone hydration completes", async () => {
     document.body.innerHTML = `
       <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">

@@ -925,7 +925,30 @@ function describeNaverFullReviewState() {
       .filter(isRenderedInActiveTree).length,
     dialogCount: [...document.querySelectorAll("[role='dialog']")]
       .filter(isRenderedInActiveTree).length,
+    summaryCount: document.querySelectorAll("[data-shp-area='sprvsub.topreview']").length,
+    candidateCount: document.querySelectorAll(
+      "[data-shp-area='sprvsub.topreviewmore'], [data-shp-area='sprvrpre.more'], [data-shp-area='sprvsub.rvmore']",
+    ).length,
+    scrollY: Math.round(window.scrollY),
+    documentHeight: document.documentElement.scrollHeight,
   };
+}
+
+async function waitForFullNaverReviewControls(timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const controls = findFullNaverReviewControls();
+    if (controls.length) return controls;
+
+    const summaryNodes = [...document.querySelectorAll("[data-shp-area='sprvsub.topreview']")];
+    const lazyLoadTarget =
+      document.querySelector("[data-shp-area='sprvsub.topreviewmore']") ||
+      document.querySelector("[data-shp-area='sprvrpre.more']") ||
+      summaryNodes.at(-1);
+    lazyLoadTarget?.scrollIntoView?.({ block: "center", behavior: "auto" });
+    await wait(Math.min(300, Math.max(deadline - Date.now(), 0)));
+  }
+  return findFullNaverReviewControls();
 }
 
 async function openFullNaverReviewList(config, waitTimeout = 12_000) {
@@ -933,9 +956,12 @@ async function openFullNaverReviewList(config, waitTimeout = 12_000) {
     if (fullReviewDiagnostics) fullReviewDiagnostics.ready = true;
     return true;
   }
-  const controls = findFullNaverReviewControls();
+  const controls = await waitForFullNaverReviewControls(Math.min(waitTimeout, 10_000));
   if (!controls.length) {
-    if (fullReviewDiagnostics) fullReviewDiagnostics.failure = "control_not_found";
+    if (fullReviewDiagnostics) {
+      fullReviewDiagnostics.failure = "control_not_found";
+      fullReviewDiagnostics.controlSearch = describeNaverFullReviewState();
+    }
     return false;
   }
   for (const [index, control] of controls.entries()) {

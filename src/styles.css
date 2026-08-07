@@ -309,6 +309,8 @@ h1 em { color: var(--orange); font-style: normal; }
   .features { grid-template-columns: 1fr; }
   .features article, .features article:first-child, .features article:last-child { padding: 25px 0; border-right: 0; border-bottom: 1px solid #dcd6ca; }
   .features article:last-child { border-bottom: 0; }
+  .probe-page { margin-top: 12px; padding-top: 18px; }
+  .text-button.probe-back { margin-bottom: 24px; }
   .report-shell { padding-top: 10px; }
   .verdict-card { grid-template-columns: 1fr; padding: 28px; }
   .confidence { border-left: 0; border-top: 1px solid rgba(255,255,255,.18); padding: 22px 0 0; }
