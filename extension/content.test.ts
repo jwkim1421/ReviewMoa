@@ -5,6 +5,14 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type CollectorHooks = {
   applyNaverNewestSort(): Promise<boolean>;
+  collectNaverPages(
+    job: { id: string },
+    distribution: Record<number, number>,
+    options?: { requireFullDistribution?: boolean },
+  ): Promise<{
+    reviews: Array<{ id: string; rating: number; createdAt?: string }>;
+    scanned: number;
+  }>;
   detectInterruption(): {
     status: string;
     reason: string;
@@ -16,6 +24,11 @@ type CollectorHooks = {
   prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
   readNaverRatingDistribution(): Record<number, number> | null;
   revealNaverRatingDistribution(): Promise<boolean>;
+  reachedNaverCollectionTarget(
+    reviews: Array<{ rating: number }>,
+    distribution: Record<number, number>,
+    options?: { requireFullDistribution?: boolean },
+  ): boolean;
   readVisibleNaverReviews(options: {
     duplicateBodies: Set<string>;
     seenKeys: Set<string>;
@@ -28,6 +41,7 @@ type CollectorHooks = {
   validateNaverCollection(
     reviews: Array<{ rating: number }>,
     distribution: Record<number, number>,
+    options?: { requireFullDistribution?: boolean },
   ): { ok: boolean; reason?: string };
   extractRating(node: Element): number | null;
   readVisibleReviews(
@@ -366,6 +380,33 @@ describe("review collector", () => {
     expect(newest.getAttribute("aria-checked")).toBe("true");
   });
 
+  it("waits for an animated iPhone sort menu before selecting newest reviews", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <button data-shp-area="sprvarevlist_l.sortfilteropen">랭킹순</button>
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">애니메이션 뒤 정렬 메뉴가 생성되는 아이폰 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+    const opener = document.querySelector("[data-shp-area='sprvarevlist_l.sortfilteropen']")!;
+    opener.addEventListener("click", () => {
+      setTimeout(() => {
+        if (document.querySelector("#delayed-newest")) return;
+        document.querySelector("[role='dialog']")!.insertAdjacentHTML(
+          "afterbegin",
+          `<div id="delayed-newest" role="radio" aria-checked="false">최신순 정렬하기</div>`,
+        );
+        const newest = document.querySelector("#delayed-newest")!;
+        newest.addEventListener("click", () => newest.setAttribute("aria-checked", "true"));
+      }, 800);
+    });
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+    expect(document.querySelector("#delayed-newest")?.getAttribute("aria-checked")).toBe("true");
+  });
+
   it("tries Naver full-list controls even when another review node confuses summary detection", async () => {
     document.body.innerHTML = `
       <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
@@ -542,6 +583,74 @@ describe("review collector", () => {
       ok: false,
       reason: "naver_rating_distribution_mismatch",
     });
+  });
+
+  it("requires every source review when newest sort falls back to a full scan", () => {
+    const distribution = { 1: 1, 2: 2, 3: 9, 4: 33, 5: 398 };
+    const partial = [
+      ...Array.from({ length: 1 }, () => ({ rating: 1 })),
+      ...Array.from({ length: 2 }, () => ({ rating: 2 })),
+      ...Array.from({ length: 9 }, () => ({ rating: 3 })),
+      ...Array.from({ length: 33 }, () => ({ rating: 4 })),
+      ...Array.from({ length: 100 }, () => ({ rating: 5 })),
+    ];
+    const complete = [
+      ...partial,
+      ...Array.from({ length: 298 }, () => ({ rating: 5 })),
+    ];
+
+    expect(collector.reachedNaverCollectionTarget(partial, distribution)).toBe(true);
+    expect(collector.reachedNaverCollectionTarget(partial, distribution, {
+      requireFullDistribution: true,
+    })).toBe(false);
+    expect(collector.validateNaverCollection(partial, distribution, {
+      requireFullDistribution: true,
+    })).toMatchObject({ ok: false, reason: "naver_collection_incomplete" });
+    expect(collector.reachedNaverCollectionTarget(complete, distribution, {
+      requireFullDistribution: true,
+    })).toBe(true);
+    expect(collector.validateNaverCollection(complete, distribution, {
+      requireFullDistribution: true,
+    })).toEqual({ ok: true });
+  });
+
+  it("continues scrolling until a full-scan fallback has every source review", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <div id="review-scroll" style="overflow-y:auto">
+          <article data-shp-contents-id="review-1">
+            <span aria-label="별점 5점"></span>
+            <time>2026.08.08.</time>
+            <p data-shp-area="sprvarevlist_l.review">첫 페이지에서 확인한 충분히 긴 네이버 리뷰 본문입니다.</p>
+          </article>
+        </div>
+      </section>
+    `;
+    const scroller = document.querySelector("#review-scroll")!;
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000 });
+    Object.defineProperty(scroller, "clientHeight", { value: 200 });
+    scroller.addEventListener("scroll", () => {
+      if (document.querySelector("[data-shp-contents-id='review-2']")) return;
+      scroller.insertAdjacentHTML("beforeend", `
+        <article data-shp-contents-id="review-2">
+          <span aria-label="별점 5점"></span>
+          <time>2026.08.07.</time>
+          <p data-shp-area="sprvarevlist_l.review">두 번째 페이지까지 이동해 확인한 충분히 긴 네이버 리뷰 본문입니다.</p>
+        </article>
+      `);
+    });
+
+    const result = await collector.collectNaverPages(
+      { id: "full-scan-lifecycle" },
+      { 1: 0, 2: 0, 3: 0, 4: 0, 5: 2 },
+      { requireFullDistribution: true },
+    );
+
+    expect(result.scanned).toBe(2);
+    expect(result.reviews.map(({ id, rating }) => ({ id, rating }))).toEqual([
+      { id: "review-1", rating: 5 },
+      { id: "review-2", rating: 5 },
+    ]);
   });
 
   it("rejects the previously observed partial sample instead of publishing it", () => {

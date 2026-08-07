@@ -393,7 +393,10 @@ async function collectNaver(job, config, product) {
     status: "collecting",
     message: "전체 리뷰를 최신순으로 정렬하고 있어요.",
   });
-  if (!(await applyNaverNewestSort())) {
+  const newestSortApplied = await applyNaverNewestSort();
+  const sourceReviewCount = RATINGS.reduce((sum, rating) => sum + sourceDistribution[rating], 0);
+  const fullScanFallback = !newestSortApplied && sourceReviewCount <= MAX_SCANNED_WITHOUT_FILTER;
+  if (!newestSortApplied && !fullScanFallback) {
     fullReviewDiagnostics.failure = "newest_sort_not_verified";
     return {
       jobId: job.id,
@@ -404,13 +407,27 @@ async function collectNaver(job, config, product) {
       collectorDiagnostics: fullReviewDiagnostics,
     };
   }
+  if (fullScanFallback) {
+    fullReviewDiagnostics.sortFallback = {
+      mode: "full_scan_then_local_date_sort",
+      sourceReviewCount,
+    };
+    await notifyProgress(job, {
+      status: "collecting",
+      message: `최신순 메뉴 대신 전체 리뷰 ${sourceReviewCount}개를 확인한 뒤 작성일로 정리하고 있어요.`,
+    });
+  }
 
-  const pageResult = await collectNaverPages(job, sourceDistribution);
+  const pageResult = await collectNaverPages(job, sourceDistribution, {
+    requireFullDistribution: fullScanFallback,
+  });
   if (pageResult.interruption) {
     return { jobId: job.id, ...pageResult.interruption, product, reviews: pageResult.reviews };
   }
   const reviews = selectLatestByRating(pageResult.reviews);
-  const validation = validateNaverCollection(pageResult.reviews, sourceDistribution);
+  const validation = validateNaverCollection(pageResult.reviews, sourceDistribution, {
+    requireFullDistribution: fullScanFallback,
+  });
   fullReviewDiagnostics.scanned = pageResult.scanned;
   fullReviewDiagnostics.ratingDistribution = countReviewsByRating(pageResult.reviews);
   fullReviewDiagnostics.validation = validation;
@@ -593,11 +610,7 @@ async function applyNaverNewestSort() {
     control = findNaverNewestSortControl();
   }
   if (!control) {
-    const opener = findNaverSortOpener();
-    if (activateControl(opener)) {
-      await wait(400);
-      control = findNaverNewestSortControl();
-    }
+    control = await openNaverSortMenu();
   }
   if (!control) {
     const verified = visibleNaverReviewsAreNewestFirst();
@@ -628,6 +641,27 @@ async function applyNaverNewestSort() {
     datesVerified,
   });
   return verified;
+}
+
+async function openNaverSortMenu() {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const opener = findNaverSortOpener();
+    if (!activateControl(opener)) return null;
+    const control = await waitForNaverNewestSortControl(3_000);
+    if (control) return control;
+    await wait(250);
+  }
+  return null;
+}
+
+async function waitForNaverNewestSortControl(timeout) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const control = findNaverNewestSortControl();
+    if (control) return control;
+    await wait(Math.min(150, Math.max(deadline - Date.now(), 0)));
+  }
+  return findNaverNewestSortControl();
 }
 
 function findNaverNewestSortControl() {
@@ -720,13 +754,15 @@ function isSelectedControl(control) {
     /\b(active|checked|selected|on)\b/i.test(control.className || ""));
 }
 
-async function collectNaverPages(job, sourceDistribution) {
+async function collectNaverPages(job, sourceDistribution, options = {}) {
   const reviews = [];
   const seenKeys = new Set();
   const duplicateBodies = new Set();
   const targets = Object.fromEntries(RATINGS.map((rating) => [
     rating,
-    Math.min(sourceDistribution[rating], 100),
+    options.requireFullDistribution
+      ? sourceDistribution[rating]
+      : Math.min(sourceDistribution[rating], 100),
   ]));
   let scanned = 0;
   let stalled = 0;
@@ -739,7 +775,9 @@ async function collectNaverPages(job, sourceDistribution) {
     for (const review of visible) {
       const retained = reviews.filter((item) => item.rating === review.rating).length;
       const sourceCount = sourceDistribution[review.rating];
-      const retainLimit = sourceCount <= 100 ? sourceCount + 1 : targets[review.rating];
+      const retainLimit = options.requireFullDistribution
+        ? sourceCount + 1
+        : sourceCount <= 100 ? sourceCount + 1 : targets[review.rating];
       if (retained < retainLimit) reviews.push(review);
     }
     await notifyProgress(job, {
@@ -749,7 +787,7 @@ async function collectNaverPages(job, sourceDistribution) {
       scanned,
       message: `네이버 리뷰 ${scanned}개를 확인하고 별점별로 검증하고 있어요.`,
     });
-    if (reachedNaverCollectionTarget(reviews, sourceDistribution)) break;
+    if (reachedNaverCollectionTarget(reviews, sourceDistribution, options)) break;
 
     const before = naverReviewPageSignature();
     const advanced = await advanceNaverReviews();
@@ -832,12 +870,16 @@ function countReviewsByRating(reviews) {
   ]));
 }
 
-function reachedNaverCollectionTarget(reviews, sourceDistribution) {
+function reachedNaverCollectionTarget(reviews, sourceDistribution, options = {}) {
   const counts = countReviewsByRating(reviews);
-  return RATINGS.every((rating) => counts[rating] >= Math.min(sourceDistribution[rating], 100));
+  return RATINGS.every((rating) => counts[rating] >= (
+    options.requireFullDistribution
+      ? sourceDistribution[rating]
+      : Math.min(sourceDistribution[rating], 100)
+  ));
 }
 
-function validateNaverCollection(reviews, sourceDistribution) {
+function validateNaverCollection(reviews, sourceDistribution, options = {}) {
   const counts = countReviewsByRating(reviews);
   for (const rating of RATINGS) {
     if (counts[rating] > sourceDistribution[rating]) {
@@ -847,7 +889,9 @@ function validateNaverCollection(reviews, sourceDistribution) {
         message: `네이버 원본에는 ${rating}점 리뷰가 ${sourceDistribution[rating]}개인데 ${counts[rating]}개가 감지되어 분석을 중단했습니다.`,
       };
     }
-    const target = Math.min(sourceDistribution[rating], 100);
+    const target = options.requireFullDistribution
+      ? sourceDistribution[rating]
+      : Math.min(sourceDistribution[rating], 100);
     if (counts[rating] < target) {
       return {
         ok: false,
@@ -1533,6 +1577,7 @@ function wait(milliseconds) {
 globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   detectInterruption,
   applyNaverNewestSort,
+  collectNaverPages,
   extractContent,
   extractRating,
   extractDate,
@@ -1544,6 +1589,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   prepareReviewArea,
   readNaverRatingDistribution,
   revealNaverRatingDistribution,
+  reachedNaverCollectionTarget,
   readVisibleNaverReviews,
   readVisibleReviews,
   selectLatestByRating,
