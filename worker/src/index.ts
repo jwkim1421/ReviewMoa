@@ -1012,6 +1012,8 @@ async function handle(request: Request, env: AppEnv) {
       reviews?: unknown;
       confirmedEmpty?: unknown;
       partialReason?: unknown;
+      extensionVersion?: unknown;
+      collectorDiagnostics?: unknown;
     }>(request);
     if (!validOperatorToken(body.operatorToken)) {
       return json({ error: "INVALID_OPERATOR_TOKEN" }, 401, origin);
@@ -1028,6 +1030,23 @@ async function handle(request: Request, env: AppEnv) {
       return json({ error: "INVALID_PARTIAL_REASON" }, 400, origin);
     }
     if (
+      body.extensionVersion !== undefined &&
+      (typeof body.extensionVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(body.extensionVersion))
+    ) {
+      return json({ error: "INVALID_EXTENSION_VERSION" }, 400, origin);
+    }
+    if (
+      body.collectorDiagnostics !== undefined &&
+      (
+        !body.collectorDiagnostics ||
+        typeof body.collectorDiagnostics !== "object" ||
+        Array.isArray(body.collectorDiagnostics) ||
+        JSON.stringify(body.collectorDiagnostics).length > 4_000
+      )
+    ) {
+      return json({ error: "INVALID_COLLECTOR_DIAGNOSTICS" }, 400, origin);
+    }
+    if (
       body.product !== undefined &&
       (
         !body.product ||
@@ -1042,6 +1061,11 @@ async function handle(request: Request, env: AppEnv) {
 
     const now = new Date().toISOString();
     const tokenHash = await hashOperatorToken(body.operatorToken);
+    const diagnosticProgress = {
+      extensionVersion: body.extensionVersion,
+      collectorDiagnostics: body.collectorDiagnostics,
+      source: "ios-safari",
+    };
     const claimed = await env.DB.prepare(
       `UPDATE jobs
        SET status = 'analyzing',
@@ -1069,7 +1093,7 @@ async function handle(request: Request, env: AppEnv) {
     ).bind(
       now,
       now,
-      JSON.stringify({ stage: "uploading", accepted: body.reviews.length, source: "ios-safari" }),
+      JSON.stringify({ stage: "uploading", accepted: body.reviews.length, ...diagnosticProgress }),
       now,
       jobId,
       tokenHash,
@@ -1153,7 +1177,7 @@ async function handle(request: Request, env: AppEnv) {
         ).bind(
           finalStatus,
           finishedAt,
-          JSON.stringify({ stage: "completing", accepted: rows.length, source: "ios-safari" }),
+          JSON.stringify({ stage: "completing", accepted: rows.length, ...diagnosticProgress }),
           finishedAt,
           jobId,
         ),

@@ -160,6 +160,11 @@ describe("mobile Safari handoff background flow", () => {
         jobId: "22222222-2222-4222-8222-222222222222",
         status: "completed",
         product: { name: "아이 명화 사운드북" },
+        collectorDiagnostics: {
+          summaryDetected: true,
+          attempts: [{ area: "sprvsub.rvmore", activated: true }],
+          ready: true,
+        },
         reviews: [{
           id: "review-1",
           rating: 5,
@@ -173,7 +178,9 @@ describe("mobile Safari handoff background flow", () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(String(init?.body))).toMatchObject({
       operatorToken,
+      extensionVersion: "0.1.0",
       product: { name: "아이 명화 사운드북" },
+      collectorDiagnostics: expect.objectContaining({ ready: true }),
       reviews: [{ id: "review-1", rating: 5 }],
     });
     expect(storage["reviewmoa.activeJob"]).toBeNull();

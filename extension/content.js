@@ -21,6 +21,7 @@ const MAX_PAGE_ATTEMPTS = 40;
 const COLLECTION_OVERLAY_ID = "reviewmoa-collection-overlay";
 let operatorWatchTimer;
 let activeCollection;
+let fullReviewDiagnostics;
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -224,7 +225,14 @@ async function collect(job) {
 
   const config = globalThis.REVIEWMOA_GET_SITE_CONFIG?.();
   const product = readProduct();
-  if (isNaverPage() && hasOnlyNaverSummaryReviews(config)) {
+  fullReviewDiagnostics = isNaverPage()
+    ? {
+        summaryDetected: hasOnlyNaverSummaryReviews(config),
+        startPath: location.pathname,
+        attempts: [],
+      }
+    : undefined;
+  if (fullReviewDiagnostics?.summaryDetected) {
     await notifyProgress(job, {
       status: "collecting",
       message: "대표 리뷰를 확인했습니다. 전체 리뷰 목록을 여는 중이에요.",
@@ -343,6 +351,7 @@ async function collect(job) {
         : `최신 리뷰 ${reviews.length}개를 수집했습니다.`,
     product,
     capability,
+    collectorDiagnostics: fullReviewDiagnostics,
     reviews,
     collectedAt: new Date().toISOString(),
   };
@@ -457,14 +466,39 @@ function hasOnlyNaverSummaryReviews(config) {
   );
 }
 
+function findFullNaverReviewControls() {
+  const controls = [
+    firstUsable(["a[data-shp-area='sprvsub.rvmore']"]),
+    findControlByText(/^(?:리뷰|쇼핑몰리뷰)\s*[\d,]+$/),
+    firstUsable([
+      "button[data-shp-area='sprvsub.topreviewmore']",
+      "a[data-shp-area='sprvsub.topreviewmore']",
+    ]),
+    findControlByText(/^(?:리뷰|전체 리뷰)\s*(?:전체)?보기$/),
+  ].filter(Boolean);
+  return [...new Set(controls)];
+}
+
 function findFullNaverReviewControl() {
-  return firstUsable([
-    "a[data-shp-area='sprvsub.rvmore']",
-    "button[data-shp-area='sprvsub.topreviewmore']",
-    "a[data-shp-area='sprvsub.topreviewmore']",
-  ]) || findControlByText(
-    /^(?:리뷰|쇼핑몰리뷰)\s*[\d,]+$|^(?:리뷰|전체 리뷰)\s*(?:전체)?보기$/,
-  );
+  return findFullNaverReviewControls()[0] ?? null;
+}
+
+function describeFullReviewControl(control) {
+  let hrefPath;
+  const href = control.getAttribute("href");
+  if (href) {
+    try {
+      hrefPath = new URL(href, location.href).pathname;
+    } catch {
+      hrefPath = "invalid";
+    }
+  }
+  return {
+    tag: control.tagName,
+    area: control.getAttribute("data-shp-area") || undefined,
+    text: normalize(control.textContent || "").slice(0, 60) || undefined,
+    hrefPath,
+  };
 }
 
 async function waitForFullNaverReviewList(config, timeout = 5_000) {
@@ -477,13 +511,35 @@ async function waitForFullNaverReviewList(config, timeout = 5_000) {
   return false;
 }
 
-async function openFullNaverReviewList(config) {
+async function openFullNaverReviewList(config, waitTimeout = 5_000) {
   if (!hasOnlyNaverSummaryReviews(config)) return true;
-  const control = findFullNaverReviewControl();
-  if (!control) return false;
-  if (control.tagName === "A") control.removeAttribute("target");
-  if (!activateControl(control)) return false;
-  return waitForFullNaverReviewList(config);
+  const controls = findFullNaverReviewControls();
+  if (!controls.length) {
+    if (fullReviewDiagnostics) fullReviewDiagnostics.failure = "control_not_found";
+    return false;
+  }
+  for (const control of controls) {
+    if (control.tagName === "A") control.removeAttribute("target");
+    const attempt = {
+      ...describeFullReviewControl(control),
+      activated: activateControl(control),
+    };
+    fullReviewDiagnostics?.attempts.push(attempt);
+    if (!attempt.activated) continue;
+    if (await waitForFullNaverReviewList(config, waitTimeout)) {
+      if (fullReviewDiagnostics) {
+        fullReviewDiagnostics.ready = true;
+        fullReviewDiagnostics.endPath = location.pathname;
+      }
+      return true;
+    }
+  }
+  if (fullReviewDiagnostics) {
+    fullReviewDiagnostics.ready = false;
+    fullReviewDiagnostics.failure = "list_did_not_open";
+    fullReviewDiagnostics.endPath = location.pathname;
+  }
+  return false;
 }
 
 async function ensureReviewArea(config) {

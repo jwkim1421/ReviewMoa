@@ -10,7 +10,7 @@ type CollectorHooks = {
   } | null;
   findFullNaverReviewControl(): Element | null;
   hasOnlyNaverSummaryReviews(config?: unknown): boolean;
-  openFullNaverReviewList(config?: unknown): Promise<boolean>;
+  openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
   extractRating(node: Element): number | null;
   readVisibleReviews(
     config: unknown,
@@ -125,6 +125,31 @@ describe("review collector", () => {
     expect(collector.hasOnlyNaverSummaryReviews()).toBe(true);
     await expect(collector.openFullNaverReviewList()).resolves.toBe(true);
     expect(control.hasAttribute("target")).toBe(false);
+    expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
+  });
+
+  it("tries the actual full-list button when the first Naver review link only scrolls", async () => {
+    document.body.innerHTML = `
+      <article data-shp-contents-type="review" data-shp-area="sprvsub.topreview">
+        <span>★ 5</span>
+        <p>대표 영역에 먼저 노출된 충분히 긴 리뷰 본문입니다.</p>
+      </article>
+      <a data-shp-area="sprvsub.rvmore">리뷰 6,003</a>
+      <button data-shp-area="sprvsub.topreviewmore">리뷰 전체보기</button>
+    `;
+    const fullListButton = document.querySelector(
+      "button[data-shp-area='sprvsub.topreviewmore']",
+    )!;
+    fullListButton.addEventListener("click", () => {
+      document.body.innerHTML = `
+        <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
+          <span>★ 5</span>
+          <p>두 번째 버튼으로 연 전체 리뷰 목록의 충분히 긴 본문입니다.</p>
+        </article>
+      `;
+    });
+
+    await expect(collector.openFullNaverReviewList(undefined, 1)).resolves.toBe(true);
     expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
   });
 

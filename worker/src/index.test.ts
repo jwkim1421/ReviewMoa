@@ -946,7 +946,13 @@ describe("collector queue API", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             operatorToken,
+            extensionVersion: "0.1.9",
             product: { name: "테스트 상품 이름" },
+            collectorDiagnostics: {
+              summaryDetected: true,
+              attempts: [{ area: "sprvsub.topreviewmore", activated: true }],
+              ready: true,
+            },
             reviews: [{
               id: "review-1",
               rating: 5,
@@ -978,6 +984,17 @@ describe("collector queue API", () => {
       expect(claim?.sql).toContain(
         "OR (status = 'collecting' AND claimed_by = 'mobile-safari')",
       );
+      const finish = statements.find((statement) =>
+        statement.sql.includes("SET status = ?") &&
+        statement.sql.includes("finished_at = ?")
+      );
+      expect(JSON.parse(String(finish?.bindings[2]))).toMatchObject({
+        extensionVersion: "0.1.9",
+        collectorDiagnostics: {
+          summaryDetected: true,
+          ready: true,
+        },
+      });
     } finally {
       vi.unstubAllGlobals();
     }
