@@ -288,6 +288,44 @@ describe("review collector", () => {
     await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
   });
 
+  it("uses a role-radio newest-sort control rendered as a div on iPhone", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <div role="radiogroup" aria-label="리뷰 정렬 기준 선택">
+          <div role="radio" aria-checked="true">랭킹순 정렬하기</div>
+          <div id="newest-radio" role="radio" aria-checked="false">최신순 정렬하기</div>
+        </div>
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">아이폰의 div 라디오 정렬 항목과 함께 표시된 충분히 긴 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+    const newest = document.querySelector("#newest-radio")!;
+    newest.addEventListener("click", () => newest.setAttribute("aria-checked", "true"));
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+    expect(newest.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("uses a native radio input with an associated newest-sort label", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <input id="ranking" type="radio" name="sort" checked>
+        <label for="ranking">랭킹순 정렬하기</label>
+        <input id="newest" type="radio" name="sort">
+        <label for="newest">최신순 정렬하기</label>
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">아이폰의 네이티브 라디오 정렬 항목과 함께 표시된 충분히 긴 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+    expect((document.querySelector("#newest") as HTMLInputElement).checked).toBe(true);
+  });
+
   it("opens the compact iPhone sort menu before selecting newest reviews", async () => {
     document.body.innerHTML = `
       <section role="dialog">
@@ -306,6 +344,26 @@ describe("review collector", () => {
 
     await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
     expect(newest.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("opens a renamed compact sort menu before selecting newest reviews", async () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <button data-shp-area="sprvarevlist.sortfilteropen">랭킹순</button>
+        <div id="newest-option" role="radio" aria-checked="false" style="display:none">최신순 정렬하기</div>
+        <article data-shp-contents-type="review">
+          <span>★ 5</span>
+          <p data-shp-area="sprvarevlist_l.review">이름이 바뀐 축약 정렬 메뉴와 함께 표시된 충분히 긴 리뷰입니다.</p>
+        </article>
+      </section>
+    `;
+    const opener = document.querySelector("[data-shp-area='sprvarevlist.sortfilteropen']")!;
+    const newest = document.querySelector("#newest-option")!;
+    opener.addEventListener("click", () => newest.setAttribute("style", "display:block"));
+    newest.addEventListener("click", () => newest.setAttribute("aria-checked", "true"));
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+    expect(newest.getAttribute("aria-checked")).toBe("true");
   });
 
   it("tries Naver full-list controls even when another review node confuses summary detection", async () => {

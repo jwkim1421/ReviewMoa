@@ -584,37 +584,120 @@ function recordNaverDistributionDiagnostics(details) {
 }
 
 async function applyNaverNewestSort() {
+  recordNaverSortDiagnostics("initial");
   let control = findNaverNewestSortControl();
   if (!control) {
-    const opener = [...document.querySelectorAll(
-      "[data-shp-area='sprvarevlist_l.sortfilteropen']",
-    )].find(isRenderedInActiveTree);
+    const reviewBody = findNaverReviewBodies()[0];
+    reviewBody?.scrollIntoView?.({ block: "start", behavior: "auto" });
+    await wait(250);
+    control = findNaverNewestSortControl();
+  }
+  if (!control) {
+    const opener = findNaverSortOpener();
     if (activateControl(opener)) {
-      await wait(300);
+      await wait(400);
       control = findNaverNewestSortControl();
     }
   }
-  if (!control) return visibleNaverReviewsAreNewestFirst();
-  if (isSelectedControl(control)) return true;
+  if (!control) {
+    const verified = visibleNaverReviewsAreNewestFirst();
+    recordNaverSortDiagnostics(verified ? "dates_already_newest" : "control_not_found");
+    return verified;
+  }
+  if (isSelectedControl(control)) {
+    recordNaverSortDiagnostics("already_selected", control);
+    return true;
+  }
   const before = naverReviewPageSignature();
-  if (!activateControl(control)) return false;
+  if (!activateControl(control)) {
+    recordNaverSortDiagnostics("activation_failed", control);
+    return false;
+  }
   await wait(100);
   let current = findNaverNewestSortControl();
-  if (isSelectedControl(current)) return true;
+  if (isSelectedControl(current)) {
+    recordNaverSortDiagnostics("selected", current);
+    return true;
+  }
   const changed = await waitForNaverReviewChange(before, 3_500);
   current = findNaverNewestSortControl();
-  return isSelectedControl(current) || changed || visibleNaverReviewsAreNewestFirst();
+  const datesVerified = visibleNaverReviewsAreNewestFirst();
+  const verified = isSelectedControl(current) || changed || datesVerified;
+  recordNaverSortDiagnostics(verified ? "verified_after_change" : "not_verified", current || control, {
+    changed,
+    datesVerified,
+  });
+  return verified;
 }
 
 function findNaverNewestSortControl() {
   const root = findNaverReviewRoot() || document.body;
   return [...root.querySelectorAll(
-    `${NAVER_SORT_SELECTOR}, button, [role='button'], a, label`,
+    `${NAVER_SORT_SELECTOR}, [data-shp-area*='sortfilter'], button, [role='button'], ` +
+    `[role='radio'], input[type='radio'], a, label`,
   )].find((element) => {
     if (!isRenderedInActiveTree(element)) return false;
-    const text = normalize(element.getAttribute("aria-label") || element.textContent || "");
+    const text = readNaverControlText(element);
     return /^최신순(?:\s*정렬하기)?$/.test(text);
   });
+}
+
+function findNaverSortOpener() {
+  const root = findNaverReviewRoot() || document.body;
+  const exact = [...root.querySelectorAll("[data-shp-area*='sortfilteropen']")]
+    .find(isRenderedInActiveTree);
+  if (exact) return exact;
+  return [...root.querySelectorAll("button, [role='button'], a")].find((element) => {
+    if (!isRenderedInActiveTree(element)) return false;
+    return /^(?:랭킹순|최신순|평점\s*(?:높은|낮은)순)$/.test(readNaverControlText(element));
+  });
+}
+
+function readNaverControlText(element) {
+  const labels = element.labels ? [...element.labels] : [];
+  const enclosingLabel = element.closest("label");
+  if (enclosingLabel && !labels.includes(enclosingLabel)) labels.push(enclosingLabel);
+  const values = [
+    element.getAttribute("aria-label"),
+    element.getAttribute("title"),
+    element.textContent,
+    ...labels.map((label) => label.textContent),
+    element.value,
+  ];
+  return normalize(values.find((value) => normalize(value || "")) || "");
+}
+
+function describeNaverSortCandidates() {
+  const root = findNaverReviewRoot() || document.body;
+  return [...root.querySelectorAll(
+    "[data-shp-area*='sortfilter'], button, [role='button'], [role='radio'], input[type='radio'], a, label",
+  )].filter(isRenderedInActiveTree).map((element) => ({
+    tag: element.tagName,
+    role: element.getAttribute("role") || undefined,
+    type: element.getAttribute("type") || undefined,
+    area: element.getAttribute("data-shp-area") || undefined,
+    selected: isSelectedControl(element),
+    text: readNaverControlText(element).slice(0, 40),
+  })).filter((candidate) => /랭킹순|최신순|평점\s*(?:높은|낮은)순|sort/i.test(
+    `${candidate.text} ${candidate.area || ""}`,
+  )).slice(0, 6);
+}
+
+function recordNaverSortDiagnostics(status, control, details = {}) {
+  if (!fullReviewDiagnostics) return;
+  fullReviewDiagnostics.sort = {
+    status,
+    control: control ? {
+      tag: control.tagName,
+      role: control.getAttribute("role") || undefined,
+      type: control.getAttribute("type") || undefined,
+      area: control.getAttribute("data-shp-area") || undefined,
+      selected: isSelectedControl(control),
+      text: readNaverControlText(control).slice(0, 40),
+    } : undefined,
+    candidates: describeNaverSortCandidates(),
+    ...details,
+  };
 }
 
 function visibleNaverReviewsAreNewestFirst() {
