@@ -306,6 +306,13 @@ describe("mobile Safari handoff background flow", () => {
       reviewCount: 1,
     });
     expect(storage["reviewmoa.lastResult"]).not.toHaveProperty("reviews");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/mobile-fail"),
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"reason":"reviews_not_extracted"'),
+      }),
+    );
     expect(updateTab).toHaveBeenCalledWith(6, { active: true });
     expect(removeTab).toHaveBeenCalledWith(20);
   });

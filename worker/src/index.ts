@@ -976,6 +976,82 @@ async function handle(request: Request, env: AppEnv) {
       : json({ error: "MOBILE_HANDOFF_NOT_AVAILABLE" }, 409, origin);
   }
 
+  if (request.method === "POST" && action === "mobile-fail") {
+    const body = await readBody<{
+      operatorToken?: unknown;
+      reason?: unknown;
+      message?: unknown;
+      extensionVersion?: unknown;
+      collectorDiagnostics?: unknown;
+    }>(request);
+    if (!validOperatorToken(body.operatorToken)) {
+      return json({ error: "INVALID_OPERATOR_TOKEN" }, 401, origin);
+    }
+    if (
+      typeof body.reason !== "string" ||
+      !/^[a-z0-9_]{1,80}$/.test(body.reason) ||
+      typeof body.message !== "string" ||
+      !body.message.trim() ||
+      body.message.length > 500
+    ) {
+      return json({ error: "INVALID_MOBILE_FAILURE" }, 400, origin);
+    }
+    if (
+      body.extensionVersion !== undefined &&
+      (typeof body.extensionVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(body.extensionVersion))
+    ) {
+      return json({ error: "INVALID_EXTENSION_VERSION" }, 400, origin);
+    }
+    if (
+      body.collectorDiagnostics !== undefined &&
+      (
+        !body.collectorDiagnostics ||
+        typeof body.collectorDiagnostics !== "object" ||
+        Array.isArray(body.collectorDiagnostics) ||
+        JSON.stringify(body.collectorDiagnostics).length > 4_000
+      )
+    ) {
+      return json({ error: "INVALID_COLLECTOR_DIAGNOSTICS" }, 400, origin);
+    }
+    const now = new Date().toISOString();
+    const tokenHash = await hashOperatorToken(body.operatorToken);
+    const failed = await env.DB.prepare(
+      `UPDATE jobs
+       SET status = 'failed',
+           error_code = ?,
+           interruption_reason = NULL,
+           progress_json = ?,
+           heartbeat_at = ?,
+           finished_at = ?,
+           operator_token_hash = NULL,
+           operator_token_expires_at = NULL,
+           updated_at = ?
+       WHERE id = ?
+         AND status = 'collecting'
+         AND claimed_by = 'mobile-safari'
+         AND operator_token_hash = ?
+         AND operator_token_expires_at >= ?`,
+    ).bind(
+      body.reason,
+      JSON.stringify({
+        stage: "failed",
+        message: body.message.trim(),
+        source: "ios-safari",
+        extensionVersion: body.extensionVersion,
+        collectorDiagnostics: body.collectorDiagnostics,
+      }),
+      now,
+      now,
+      now,
+      jobId,
+      tokenHash,
+      now,
+    ).run();
+    return failed.meta.changes
+      ? json({ id: jobId, status: "failed", errorCode: body.reason }, 200, origin)
+      : json({ error: "MOBILE_HANDOFF_NOT_AVAILABLE" }, 409, origin);
+  }
+
   if (request.method === "POST" && action === "mobile-heartbeat") {
     const body = await readBody<{
       operatorToken?: unknown;

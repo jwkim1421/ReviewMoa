@@ -13,6 +13,20 @@ type CollectorHooks = {
   hasOnlyNaverSummaryReviews(config?: unknown): boolean;
   openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
   prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
+  readNaverRatingDistribution(): Record<number, number> | null;
+  readVisibleNaverReviews(options: {
+    duplicateBodies: Set<string>;
+    seenKeys: Set<string>;
+  }): Array<{
+    id: string;
+    rating: number;
+    content: string;
+    classification: string;
+  }>;
+  validateNaverCollection(
+    reviews: Array<{ rating: number }>,
+    distribution: Record<number, number>,
+  ): { ok: boolean; reason?: string };
   extractRating(node: Element): number | null;
   readVisibleReviews(
     config: unknown,
@@ -117,10 +131,13 @@ describe("review collector", () => {
     control.addEventListener("click", (event) => {
       event.preventDefault();
       document.body.innerHTML = `
-        <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
+        <section role="dialog">
+          <button data-shp-area="sprvarevlist_l.sortfilter" aria-checked="true">최신순 정렬하기</button>
+          <article data-shp-contents-type="review">
           <span>★ 4</span>
-          <p>전체 리뷰 목록에서 새로 확인한 충분히 긴 리뷰 본문입니다.</p>
-        </article>
+            <p data-shp-area="sprvarevlist_l.review">전체 리뷰 목록에서 새로 확인한 충분히 긴 리뷰 본문입니다.</p>
+          </article>
+        </section>
       `;
     });
 
@@ -144,10 +161,13 @@ describe("review collector", () => {
     )!;
     fullListButton.addEventListener("click", () => {
       document.body.innerHTML = `
-        <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
-          <span>★ 5</span>
-          <p>두 번째 버튼으로 연 전체 리뷰 목록의 충분히 긴 본문입니다.</p>
-        </article>
+        <section role="dialog">
+          <button data-shp-area="sprvarevlist_l.sortfilter" aria-checked="true">최신순 정렬하기</button>
+          <article data-shp-contents-type="review">
+            <span>★ 5</span>
+            <p data-shp-area="sprvarevlist_l.review">두 번째 버튼으로 연 전체 리뷰 목록의 충분히 긴 본문입니다.</p>
+          </article>
+        </section>
       `;
     });
 
@@ -172,10 +192,13 @@ describe("review collector", () => {
     )!;
     fullListButton.addEventListener("click", () => {
       document.body.innerHTML = `
-        <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
-          <span>★ 4</span>
-          <p>혼합 노드가 있어도 전체 목록에서 새로 확인한 충분히 긴 리뷰입니다.</p>
-        </article>
+        <section role="dialog">
+          <button data-shp-area="sprvarevlist_l.sortfilter" aria-checked="true">최신순 정렬하기</button>
+          <article data-shp-contents-type="review">
+            <span>★ 4</span>
+            <p data-shp-area="sprvarevlist_l.review">혼합 노드가 있어도 전체 목록에서 새로 확인한 충분히 긴 리뷰입니다.</p>
+          </article>
+        </section>
       `;
     });
 
@@ -199,10 +222,13 @@ describe("review collector", () => {
         .querySelector("button[data-shp-area='sprvsub.topreviewmore']")!
         .addEventListener("click", () => {
           document.body.innerHTML = `
-            <article data-shp-contents-type="review" data-shp-area="sprvsub.review">
-              <span>★ 4</span>
-              <p>전체 목록 버튼을 통해 확인한 새로운 리뷰의 충분히 긴 본문입니다.</p>
-            </article>
+            <section role="dialog">
+              <button data-shp-area="sprvarevlist_l.sortfilter" aria-checked="true">최신순 정렬하기</button>
+              <article data-shp-contents-type="review">
+                <span>★ 4</span>
+                <p data-shp-area="sprvarevlist_l.review">전체 목록 버튼을 통해 확인한 새로운 리뷰의 충분히 긴 본문입니다.</p>
+              </article>
+            </section>
           `;
         });
     });
@@ -216,6 +242,73 @@ describe("review collector", () => {
     ).resolves.toBe(true);
     expect(collector.hasOnlyNaverSummaryReviews()).toBe(false);
     expect(document.body.textContent).toContain("전체 목록 버튼");
+  });
+
+  it("reads only Naver full-list reviews and keeps the rating from each review card", () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <button data-shp-area="sprvarevlist_l.sortfilter" aria-checked="true">최신순 정렬하기</button>
+        <div>5점 (최고예요) 1건</div>
+        <div>4점 (좋아요) 1건</div>
+        <div>3점 (괜찮아요) 0건</div>
+        <div>2점 (그저 그래요) 0건</div>
+        <div>1점 (별로예요) 0건</div>
+        <article data-shp-contents-id="five-star-review">
+          <span aria-label="별점 5점"></span>
+          <time>2026.08.08.</time>
+          <p data-shp-area="sprvarevlist_l.review">본문에 평점 1점이라는 말이 있어도 실제 카드 별점은 5점입니다.</p>
+        </article>
+        <article data-shp-contents-id="four-star-review">
+          <span aria-label="별점 4점"></span>
+          <time>2026.08.07.</time>
+          <p data-shp-area="sprvarevlist_l.review">구성이 알차고 아이가 좋아하지만 가격은 조금 아쉬워요.</p>
+        </article>
+        <aside data-shp-area="sprvartopspick_l.list">
+          <p>스토어 PICK 대표 리뷰는 실제 목록에 포함하지 않습니다.</p>
+        </aside>
+      </section>
+    `;
+
+    const distribution = collector.readNaverRatingDistribution();
+    const reviews = collector.readVisibleNaverReviews({
+      duplicateBodies: new Set(),
+      seenKeys: new Set(),
+    });
+
+    expect(distribution).toEqual({ 1: 0, 2: 0, 3: 0, 4: 1, 5: 1 });
+    expect(reviews).toHaveLength(2);
+    expect(reviews.map(({ id, rating }) => ({ id, rating }))).toEqual([
+      { id: "five-star-review", rating: 5 },
+      { id: "four-star-review", rating: 4 },
+    ]);
+    expect(collector.validateNaverCollection(reviews, distribution!)).toEqual({ ok: true });
+  });
+
+  it("rejects a Naver collection that contradicts the source rating distribution", () => {
+    const validation = collector.validateNaverCollection(
+      [{ rating: 5 }, { rating: 1 }],
+      { 5: 1, 4: 0, 3: 0, 2: 0, 1: 0 },
+    );
+    expect(validation).toMatchObject({
+      ok: false,
+      reason: "naver_rating_distribution_mismatch",
+    });
+  });
+
+  it("rejects the previously observed partial sample instead of publishing it", () => {
+    const reviews = [
+      ...Array.from({ length: 8 }, () => ({ rating: 5 })),
+      ...Array.from({ length: 3 }, () => ({ rating: 4 })),
+      { rating: 3 },
+    ];
+    const validation = collector.validateNaverCollection(
+      reviews,
+      { 5: 100, 4: 4, 3: 2, 2: 0, 1: 0 },
+    );
+    expect(validation).toMatchObject({
+      ok: false,
+      reason: "naver_collection_incomplete",
+    });
   });
 
   it("keeps at most one hundred included reviews per rating", () => {

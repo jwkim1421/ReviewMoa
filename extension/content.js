@@ -19,6 +19,8 @@ const MAX_SCANNED_PER_RATING = 300;
 const MAX_SCANNED_WITHOUT_FILTER = 3000;
 const MAX_PAGE_ATTEMPTS = 40;
 const COLLECTION_OVERLAY_ID = "reviewmoa-collection-overlay";
+const NAVER_REVIEW_BODY_SELECTOR = "[data-shp-area='sprvarevlist_l.review']";
+const NAVER_SORT_SELECTOR = "button[data-shp-area='sprvarevlist_l.sortfilter']";
 let operatorWatchTimer;
 let activeCollection;
 let fullReviewDiagnostics;
@@ -225,6 +227,7 @@ async function collect(job) {
 
   const config = globalThis.REVIEWMOA_GET_SITE_CONFIG?.();
   const product = readProduct();
+  if (isNaverPage()) return collectNaver(job, config, product);
   const hasReviewArea = await prepareReviewArea(config, job);
   if (!hasReviewArea) {
     return {
@@ -336,6 +339,400 @@ async function collect(job) {
     reviews,
     collectedAt: new Date().toISOString(),
   };
+}
+
+async function collectNaver(job, config, product) {
+  fullReviewDiagnostics = {
+    adapter: "naver-mobile-v1",
+    startPath: location.pathname,
+    attempts: [],
+  };
+  const hasReviewArea = await ensureReviewArea(config);
+  if (!hasReviewArea) {
+    return {
+      jobId: job.id,
+      status: "waiting_for_user",
+      reason: "review_area_not_found",
+      message: "상품 페이지에서 리뷰 영역을 열지 못했습니다. 리뷰 탭을 연 뒤 다시 확인해 주세요.",
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+
+  await notifyProgress(job, {
+    status: "collecting",
+    message: "네이버 전체 리뷰 목록을 열고 있어요.",
+  });
+  if (!(await openFullNaverReviewList(config))) {
+    return {
+      jobId: job.id,
+      status: "failed",
+      reason: "naver_full_review_list_not_verified",
+      message: "네이버 전체 리뷰 목록이 열린 것을 확인하지 못해 잘못된 분석을 중단했습니다.",
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+
+  await revealNaverRatingDistribution();
+  const sourceDistribution = readNaverRatingDistribution();
+  if (!sourceDistribution) {
+    fullReviewDiagnostics.failure = "source_distribution_not_found";
+    return {
+      jobId: job.id,
+      status: "failed",
+      reason: "naver_source_distribution_not_found",
+      message: "네이버 원본 별점 분포를 확인하지 못해 잘못된 분석을 중단했습니다.",
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+  fullReviewDiagnostics.sourceDistribution = sourceDistribution;
+
+  await notifyProgress(job, {
+    status: "collecting",
+    message: "전체 리뷰를 최신순으로 정렬하고 있어요.",
+  });
+  if (!(await applyNaverNewestSort())) {
+    fullReviewDiagnostics.failure = "newest_sort_not_verified";
+    return {
+      jobId: job.id,
+      status: "failed",
+      reason: "naver_newest_sort_not_verified",
+      message: "네이버 리뷰가 최신순으로 정렬된 것을 확인하지 못해 분석을 중단했습니다.",
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+
+  const pageResult = await collectNaverPages(job, sourceDistribution);
+  if (pageResult.interruption) {
+    return { jobId: job.id, ...pageResult.interruption, product, reviews: pageResult.reviews };
+  }
+  const reviews = selectLatestByRating(pageResult.reviews);
+  const validation = validateNaverCollection(pageResult.reviews, sourceDistribution);
+  fullReviewDiagnostics.scanned = pageResult.scanned;
+  fullReviewDiagnostics.ratingDistribution = countReviewsByRating(pageResult.reviews);
+  fullReviewDiagnostics.validation = validation;
+  if (!validation.ok) {
+    fullReviewDiagnostics.failure = validation.reason;
+    return {
+      jobId: job.id,
+      status: "failed",
+      reason: validation.reason,
+      message: validation.message,
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+
+  const confirmedEmpty = reviews.length === 0 && isConfirmedEmptyReviewArea();
+  if (!reviews.length && !confirmedEmpty) {
+    return {
+      jobId: job.id,
+      status: "failed",
+      reason: "naver_reviews_not_extracted",
+      message: "전체 리뷰 목록은 열렸지만 리뷰 카드의 별점과 본문을 안전하게 읽지 못했습니다.",
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+  return {
+    jobId: job.id,
+    status: "completed",
+    reason: confirmedEmpty ? "confirmed_zero_reviews" : "collection_completed",
+    message: confirmedEmpty
+      ? "정상적으로 확인한 결과 등록된 리뷰가 없습니다."
+      : `검증된 최신 리뷰 ${reviews.length}개를 수집했습니다.`,
+    product,
+    capability: {
+      status: "supported",
+      hasReviewArea: true,
+      supportsNewestSort: true,
+      supportsRatingFilter: false,
+    },
+    collectorDiagnostics: fullReviewDiagnostics,
+    reviews,
+    collectedAt: new Date().toISOString(),
+  };
+}
+
+function findNaverReviewBodies() {
+  return [...document.querySelectorAll(NAVER_REVIEW_BODY_SELECTOR)]
+    .filter((node) => isRenderedInActiveTree(node));
+}
+
+function findNaverReviewRoot() {
+  const first = findNaverReviewBodies()[0];
+  if (!first) return null;
+  let current = first.parentElement;
+  while (current && current !== document.body) {
+    if (current.querySelector(NAVER_SORT_SELECTOR)) return current;
+    current = current.parentElement;
+  }
+  return first.closest("[role='dialog']") || document.body;
+}
+
+function isNaverFullReviewListReady() {
+  return findNaverReviewBodies().length > 0 && Boolean(
+    [...document.querySelectorAll(NAVER_SORT_SELECTOR)].find(isRenderedInActiveTree),
+  );
+}
+
+async function revealNaverRatingDistribution() {
+  if (readNaverRatingDistribution()) return true;
+  const control = [...document.querySelectorAll("button, [role='button']")].find((element) =>
+    isRenderedInActiveTree(element) && /평점\s*비율\s*보기/.test(normalize(
+      element.getAttribute("aria-label") || element.textContent || "",
+    ))
+  );
+  if (!activateControl(control)) return false;
+  await wait(400);
+  return Boolean(readNaverRatingDistribution());
+}
+
+function readNaverRatingDistribution() {
+  const root = findNaverReviewRoot() || document.body;
+  const elements = [...root.querySelectorAll("button, [role='button'], li, div")]
+    .filter(isRenderedInActiveTree);
+  const distribution = {};
+  for (const rating of RATINGS) {
+    const pattern = new RegExp(`^${rating}점(?:\\s*\\([^)]*\\))?\\s*([\\d,]+)건$`);
+    for (const element of elements) {
+      const text = normalize(element.getAttribute("aria-label") || element.textContent || "");
+      if (text.length > 80) continue;
+      const match = text.match(pattern);
+      if (!match) continue;
+      distribution[rating] = Number(match[1].replaceAll(",", ""));
+      break;
+    }
+  }
+  if (!RATINGS.every((rating) => Number.isInteger(distribution[rating]))) return null;
+  if (RATINGS.reduce((sum, rating) => sum + distribution[rating], 0) <= 0) return null;
+  return distribution;
+}
+
+async function applyNaverNewestSort() {
+  const controls = [...document.querySelectorAll(NAVER_SORT_SELECTOR)]
+    .filter(isRenderedInActiveTree);
+  const control = controls.find((element) => /최신순/.test(normalize(
+    element.getAttribute("aria-label") || element.textContent || "",
+  )));
+  if (!control) return false;
+  if (isSelectedControl(control)) return true;
+  const before = naverReviewPageSignature();
+  if (!activateControl(control)) return false;
+  const changed = await waitForNaverReviewChange(before, 3_500);
+  const current = [...document.querySelectorAll(NAVER_SORT_SELECTOR)]
+    .filter(isRenderedInActiveTree)
+    .find((element) => /최신순/.test(normalize(
+      element.getAttribute("aria-label") || element.textContent || "",
+    )));
+  return isSelectedControl(current) || changed;
+}
+
+function isSelectedControl(control) {
+  return Boolean(control) && (control.checked === true ||
+    control.getAttribute("aria-checked") === "true" ||
+    control.getAttribute("aria-selected") === "true" ||
+    control.getAttribute("data-selected") === "true" ||
+    /\b(active|checked|selected|on)\b/i.test(control.className || ""));
+}
+
+async function collectNaverPages(job, sourceDistribution) {
+  const reviews = [];
+  const seenKeys = new Set();
+  const duplicateBodies = new Set();
+  const targets = Object.fromEntries(RATINGS.map((rating) => [
+    rating,
+    Math.min(sourceDistribution[rating], 100),
+  ]));
+  let scanned = 0;
+  let stalled = 0;
+
+  for (let page = 1; page <= MAX_PAGE_ATTEMPTS && scanned < MAX_SCANNED_WITHOUT_FILTER; page += 1) {
+    const interruption = detectInterruption();
+    if (interruption) return { reviews, scanned, interruption };
+    const visible = readVisibleNaverReviews({ seenKeys, duplicateBodies });
+    scanned += visible.length;
+    for (const review of visible) {
+      const retained = reviews.filter((item) => item.rating === review.rating).length;
+      const sourceCount = sourceDistribution[review.rating];
+      const retainLimit = sourceCount <= 100 ? sourceCount + 1 : targets[review.rating];
+      if (retained < retainLimit) reviews.push(review);
+    }
+    await notifyProgress(job, {
+      status: "collecting",
+      page,
+      collected: reviews.length,
+      scanned,
+      message: `네이버 리뷰 ${scanned}개를 확인하고 별점별로 검증하고 있어요.`,
+    });
+    if (reachedNaverCollectionTarget(reviews, sourceDistribution)) break;
+
+    const before = naverReviewPageSignature();
+    const advanced = await advanceNaverReviews();
+    const after = naverReviewPageSignature();
+    stalled = !advanced || after === before ? stalled + 1 : 0;
+    if (stalled >= 2) break;
+  }
+  return { reviews, scanned };
+}
+
+function readVisibleNaverReviews(options) {
+  const results = [];
+  for (const [index, body] of findNaverReviewBodies().entries()) {
+    const content = normalize(body.textContent || "");
+    if (content.length < 10 || content.length > 5000) continue;
+    const card = findNaverReviewCard(body);
+    const rating = card ? extractNaverCardRating(card) : null;
+    if (!RATINGS.includes(rating)) continue;
+    const createdAt = card ? extractDate(card) : undefined;
+    const sourceId = findNaverReviewSourceId(body, card);
+    const key = sourceId || `${rating}:${createdAt || ""}:${hashText(normalize(card?.textContent || content))}`;
+    if (options.seenKeys.has(key)) continue;
+    options.seenKeys.add(key);
+
+    const bodyFingerprint = fingerprint(content);
+    let classification = "included";
+    const lower = content.toLowerCase();
+    if (SPONSORED_WORDS.some((word) => lower.includes(word.toLowerCase()))) {
+      classification = "sponsored";
+    } else if (options.duplicateBodies.has(bodyFingerprint)) {
+      classification = "duplicate";
+    } else if (rating >= 4 && NEGATIVE_WORDS.filter((word) => lower.includes(word)).length >= 2) {
+      classification = "rating_mismatch";
+    } else if (rating <= 2 && POSITIVE_WORDS.filter((word) => lower.includes(word)).length >= 2) {
+      classification = "rating_mismatch";
+    }
+    options.duplicateBodies.add(bodyFingerprint);
+    results.push({
+      id: sourceId || `${location.href}#naver-review-${hashText(`${content}:${index}`)}`,
+      rating,
+      content,
+      createdAt,
+      option: card ? extractOption(card) : undefined,
+      classification,
+    });
+  }
+  return results;
+}
+
+function findNaverReviewCard(body) {
+  let current = body.parentElement;
+  for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+    if (current.querySelectorAll(NAVER_REVIEW_BODY_SELECTOR).length !== 1) continue;
+    if (RATINGS.includes(extractNaverCardRating(current))) return current;
+  }
+  return null;
+}
+
+function extractNaverCardRating(card) {
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll(NAVER_REVIEW_BODY_SELECTOR).forEach((node) => node.remove());
+  return extractRating(clone);
+}
+
+function findNaverReviewSourceId(body, card) {
+  for (const node of [body, card, body.parentElement]) {
+    if (!node) continue;
+    const value = node.getAttribute("data-review-id") ||
+      node.getAttribute("data-review-no") ||
+      node.getAttribute("data-shp-contents-id");
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function countReviewsByRating(reviews) {
+  return Object.fromEntries(RATINGS.map((rating) => [
+    rating,
+    reviews.filter((review) => review.rating === rating).length,
+  ]));
+}
+
+function reachedNaverCollectionTarget(reviews, sourceDistribution) {
+  const counts = countReviewsByRating(reviews);
+  return RATINGS.every((rating) => counts[rating] >= Math.min(sourceDistribution[rating], 100));
+}
+
+function validateNaverCollection(reviews, sourceDistribution) {
+  const counts = countReviewsByRating(reviews);
+  for (const rating of RATINGS) {
+    if (counts[rating] > sourceDistribution[rating]) {
+      return {
+        ok: false,
+        reason: "naver_rating_distribution_mismatch",
+        message: `네이버 원본에는 ${rating}점 리뷰가 ${sourceDistribution[rating]}개인데 ${counts[rating]}개가 감지되어 분석을 중단했습니다.`,
+      };
+    }
+    const target = Math.min(sourceDistribution[rating], 100);
+    if (counts[rating] < target) {
+      return {
+        ok: false,
+        reason: "naver_collection_incomplete",
+        message: `네이버 ${rating}점 리뷰 ${target}개 중 ${counts[rating]}개만 확인되어 불완전한 분석을 중단했습니다.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+function naverReviewPageSignature() {
+  const bodies = findNaverReviewBodies();
+  return `${bodies.length}:` + bodies.slice(-5)
+    .map((node) => hashText(normalize(node.parentElement?.textContent || node.textContent || "")))
+    .join(":");
+}
+
+async function waitForNaverReviewChange(before, timeout = 2_800) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    await wait(200);
+    const after = naverReviewPageSignature();
+    if (after && after !== before) return true;
+  }
+  return false;
+}
+
+async function advanceNaverReviews() {
+  const bodies = findNaverReviewBodies();
+  const last = bodies.at(-1);
+  if (!last) return false;
+  const before = naverReviewPageSignature();
+  const scrollContainer = findScrollableAncestor(last);
+  last.scrollIntoView?.({ block: "end", behavior: "auto" });
+  if (scrollContainer) {
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    scrollContainer.dispatchEvent(new Event("scroll", { bubbles: true }));
+  } else {
+    window.scrollBy(0, Math.floor(window.innerHeight * 0.8));
+  }
+  return waitForNaverReviewChange(before);
+}
+
+function findScrollableAncestor(node) {
+  let current = node.parentElement;
+  while (current && current !== document.body) {
+    const style = getComputedStyle(current);
+    if (/(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight + 16) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function isRenderedInActiveTree(element) {
+  if (!element || element.hidden || element.getAttribute("aria-hidden") === "true") return false;
+  let current = element;
+  while (current && current !== document.documentElement) {
+    if (current.hidden || current.getAttribute?.("aria-hidden") === "true") return false;
+    const style = getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    current = current.parentElement;
+  }
+  return true;
 }
 
 async function prepareReviewArea(config, job, waitTimeout = 5_000) {
@@ -477,13 +874,15 @@ function hasOnlyNaverSummaryReviews(config) {
 
 function findFullNaverReviewControls() {
   const controls = [
-    firstUsable(["a[data-shp-area='sprvsub.rvmore']"]),
-    findControlByText(/^(?:리뷰|쇼핑몰리뷰)\s*[\d,]+$/),
     firstUsable([
       "button[data-shp-area='sprvsub.topreviewmore']",
       "a[data-shp-area='sprvsub.topreviewmore']",
+      "button[data-shp-area='sprvrpre.more']",
+      "a[data-shp-area='sprvrpre.more']",
     ]),
     findControlByText(/^(?:리뷰|전체 리뷰)\s*(?:전체)?보기$/),
+    firstUsable(["a[data-shp-area='sprvsub.rvmore']"]),
+    findControlByText(/^(?:리뷰|쇼핑몰리뷰)\s*[\d,]+$/),
   ].filter(Boolean);
   return [...new Set(controls)];
 }
@@ -514,15 +913,16 @@ async function waitForFullNaverReviewList(config, beforeSignature, beforeUrl, ti
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     await wait(200);
-    const afterSignature = reviewPageSignature(config);
-    if (location.href !== beforeUrl || (afterSignature && afterSignature !== beforeSignature)) {
-      return true;
-    }
+    if (isNaverFullReviewListReady()) return true;
   }
   return false;
 }
 
 async function openFullNaverReviewList(config, waitTimeout = 5_000) {
+  if (isNaverFullReviewListReady()) {
+    if (fullReviewDiagnostics) fullReviewDiagnostics.ready = true;
+    return true;
+  }
   const controls = findFullNaverReviewControls();
   if (!controls.length) {
     if (fullReviewDiagnostics) fullReviewDiagnostics.failure = "control_not_found";
@@ -882,7 +1282,10 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   hideCollectionOverlay,
   openFullNaverReviewList,
   prepareReviewArea,
+  readNaverRatingDistribution,
+  readVisibleNaverReviews,
   readVisibleReviews,
   selectLatestByRating,
   showCollectionOverlay,
+  validateNaverCollection,
 });

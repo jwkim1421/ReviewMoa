@@ -474,6 +474,40 @@ describe("collector queue API", () => {
       statement.sql.includes("operator_token_hash")
     );
     expect(heartbeatUpdate?.bindings[1]).toContain('"source":"ios-safari"');
+
+    const failed = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-1/mobile-fail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operatorToken,
+          reason: "naver_collection_incomplete",
+          message: "네이버 5점 리뷰 100개 중 12개만 확인되어 분석을 중단했습니다.",
+          extensionVersion: "0.1.12",
+          collectorDiagnostics: {
+            sourceDistribution: { 5: 100, 4: 4, 3: 2, 2: 0, 1: 0 },
+            scanned: 12,
+          },
+        }),
+      }),
+      collectorEnv(db),
+    );
+    expect(failed.status).toBe(200);
+    await expect(failed.json()).resolves.toMatchObject({
+      status: "failed",
+      errorCode: "naver_collection_incomplete",
+    });
+    const failedUpdate = statements.find((statement) =>
+      statement.sql.includes("SET status = 'failed'") &&
+      statement.sql.includes("operator_token_hash = NULL")
+    );
+    expect(failedUpdate?.bindings[0]).toBe("naver_collection_incomplete");
+    expect(JSON.parse(String(failedUpdate?.bindings[1]))).toMatchObject({
+      stage: "failed",
+      source: "ios-safari",
+      extensionVersion: "0.1.12",
+      collectorDiagnostics: { scanned: 12 },
+    });
   });
 
   it("returns a valid cached report instead of creating another job", async () => {

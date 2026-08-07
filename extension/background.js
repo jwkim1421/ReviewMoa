@@ -210,6 +210,32 @@ async function returnToReviewMoa(job) {
   }
 }
 
+async function reportMobileFailure(job, result) {
+  let lastResponse;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      lastResponse = await fetch(
+        `${REVIEWMOA_API_BASE}/v1/jobs/${encodeURIComponent(job.id)}/mobile-fail`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operatorToken: job.operatorToken,
+            reason: result.reason || "mobile_collection_failed",
+            message: result.message || "iPhone에서 리뷰를 안전하게 수집하지 못했습니다.",
+            extensionVersion: chrome.runtime.getManifest().version,
+            collectorDiagnostics: result.collectorDiagnostics,
+          }),
+        },
+      );
+      if (lastResponse.ok) return true;
+    } catch {
+      // 일시적인 모바일 네트워크 오류라면 한 번 더 전송한다.
+    }
+  }
+  return false;
+}
+
 async function handleMobileCollectionResult(job, result) {
   const storedResult = compactResult(result);
   if (!["completed", "partial"].includes(result.status)) {
@@ -226,6 +252,8 @@ async function handleMobileCollectionResult(job, result) {
           }),
         },
       ).catch(() => undefined);
+    } else {
+      await reportMobileFailure(job, result);
     }
     await chrome.storage.local.set({
       [ACTIVE_KEY]: needsOperator
