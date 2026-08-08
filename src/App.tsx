@@ -48,6 +48,10 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function cleanReviewText(value: string) {
+  return value.replace(/(?:더보기\s*)?(?:이미지\s*펼치기\s*)+$/u, "").trim();
+}
+
 export function App() {
   const [url, setUrl] = useState("");
   const [view, setView] = useState<View>(() => window.location.hash === "#ideas" ? "ideas" : "home");
@@ -647,8 +651,10 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
         <h1>{report.product.name}</h1>
         <a href={report.product.canonicalUrl} target="_blank" rel="noreferrer">원본 상품 보기 <ExternalLink size={13} /></a>
         <div className="cache-banner">
-          <Clock3 size={16} />
-          <span><strong>{formatDate(report.collectedAt)}</strong> 기준으로 수집한 결과입니다.</span>
+          <div className="cache-banner-copy">
+            <Clock3 size={16} />
+            <span><strong>{formatDate(report.collectedAt)}</strong> 기준으로 수집한 결과입니다.</span>
+          </div>
           <button onClick={onRefresh}><RefreshCw size={14} /> 다시 불러오기</button>
         </div>
       </header>
@@ -698,7 +704,7 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
 
       <section className="ratings-section">
         <div className="section-heading">
-          <div><span className="section-label">별점별 최신 리뷰</span><h2>평점마다 다른 이야기를 확인하세요.</h2></div>
+          <div><span className="section-label">별점별 최신 리뷰</span><h2>평점별 리뷰를 확인하세요.</h2></div>
           <p>의심 리뷰를 제외한 최신 리뷰를 별점별 최대 100개까지 반영합니다.</p>
         </div>
         <div className="rating-list">
@@ -732,7 +738,7 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
                     {visibleReviews.map((review, index) => (
                       <blockquote key={review.id}>
                         <header><span>구매자 {String(index + 1).padStart(2, "0")}</span><time>{review.createdAt ? formatDate(review.createdAt).split(" 오전")[0].split(" 오후")[0] : "작성일 미상"}</time></header>
-                        <p>{review.content}</p>
+                        <p>{cleanReviewText(review.content)}</p>
                       </blockquote>
                     ))}
                   </div>
@@ -743,7 +749,7 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
         </div>
       </section>
 
-      <section className="anomaly-card">
+      <section className={`anomaly-card${anomalyTotal ? "" : " empty"}`}>
         <div>
           <span className="section-label">제외된 리뷰 신호</span>
           <h2>{anomalyTotal ? "결론에서 덜어낸 리뷰" : "분리된 리뷰 신호가 없어요"}</h2>

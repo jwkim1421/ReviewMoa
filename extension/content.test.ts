@@ -786,4 +786,12 @@ describe("review collector", () => {
     collector.hideCollectionOverlay();
     expect(document.querySelector("#reviewmoa-collection-overlay")).toBeNull();
   });
+
+  it("removes Naver review expansion labels appended to review text", () => {
+    expect(collector.cleanReviewContent(
+      "아이가 책을 좋아하고 노래도 잘 들어요더보기이미지 펼치기이미지 펼치기",
+    )).toBe("아이가 책을 좋아하고 노래도 잘 들어요");
+    expect(collector.cleanReviewContent("튼튼하고 마음에 들어요 더보기 이미지 펼치기"))
+      .toBe("튼튼하고 마음에 들어요");
+  });
 });

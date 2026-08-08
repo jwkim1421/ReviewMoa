@@ -838,7 +838,7 @@ function describeNaverReviewBodyState() {
 function readVisibleNaverReviews(options) {
   const results = [];
   for (const [index, body] of findNaverReviewBodies().entries()) {
-    const content = normalize(body.textContent || "");
+    const content = cleanReviewContent(body.textContent || "");
     if (content.length < 10 || content.length > 5000) continue;
     const card = findNaverReviewCard(body);
     const rating = card ? extractNaverCardRating(card) : null;
@@ -1521,11 +1521,11 @@ function extractContent(node) {
   ];
   for (const selector of candidates) {
     const texts = [...node.querySelectorAll(selector)]
-      .map((element) => normalize(element.textContent || ""))
+      .map((element) => cleanReviewContent(element.textContent || ""))
       .filter((text) => text.length >= 10 && text.length <= 5000);
     if (texts.length) return texts.sort((a, b) => b.length - a.length)[0];
   }
-  return normalize(node.textContent || "");
+  return cleanReviewContent(node.textContent || "");
 }
 
 function extractRating(node) {
@@ -1618,6 +1618,10 @@ function normalize(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function cleanReviewContent(value) {
+  return normalize(value).replace(/(?:더보기\s*)?(?:이미지\s*펼치기\s*)+$/u, "").trim();
+}
+
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -1627,6 +1631,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   applyNaverNewestSort,
   chooseNaverCollectionStrategy,
   collectNaverPages,
+  cleanReviewContent,
   extractContent,
   extractRating,
   extractDate,
