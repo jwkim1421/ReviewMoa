@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "리뷰모아 수집 도우미",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "사용자가 연 상품 페이지에서 공개된 최신 리뷰를 별점별로 확인합니다.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [

@@ -30,18 +30,59 @@ function aspectCounts(reviews: StoredReview[], aspects: Array<[string, RegExp]>)
     .sort((a, b) => b.mentions - a.mentions);
 }
 
-function confidence(reviews: StoredReview[], excluded: number) {
-  const counts = [1, 2, 3, 4, 5].map((rating) =>
-    Math.min(reviews.filter((review) => review.rating === rating).length / 100, 1),
-  );
+type ReportContext = {
+  sourceDistribution?: Partial<Record<1 | 2 | 3 | 4 | 5, number>>;
+};
+
+function confidence(
+  reviews: StoredReview[],
+  excluded: number,
+  strongestMention: number,
+  context: ReportContext,
+) {
+  const counts = ([1, 2, 3, 4, 5] as const).map((rating) => {
+    const collected = reviews.filter((review) => review.rating === rating).length;
+    const sourceCount = context.sourceDistribution?.[rating];
+    if (Number.isInteger(sourceCount)) {
+      const target = Math.min(sourceCount ?? 0, 100);
+      return target === 0 ? 1 : Math.min(collected / target, 1);
+    }
+    return Math.min(collected / 100, 1);
+  });
   const completeness = counts.reduce((sum, value) => sum + value, 0) / 5;
   const evidence = Math.min(reviews.length / 300, 1);
+  const consistency = reviews.length
+    ? Math.min(strongestMention / Math.max(reviews.length * 0.15, 1), 1)
+    : 0;
+  const now = Date.now();
+  const freshness = reviews.length
+    ? reviews.reduce((sum, review) => {
+        const timestamp = review.created_at ? Date.parse(review.created_at) : Number.NaN;
+        if (!Number.isFinite(timestamp)) return sum;
+        const ageDays = Math.max(0, (now - timestamp) / 86_400_000);
+        return sum + (ageDays <= 180 ? 1 : ageDays <= 365 ? 0.7 : ageDays <= 730 ? 0.35 : 0.1);
+      }, 0) / reviews.length
+    : 0;
   const health = reviews.length ? 1 - Math.min(excluded / (reviews.length + excluded), 1) : 0;
-  const score = completeness * 35 + evidence * 25 + 15 + 15 + health * 10;
-  return Math.round(Math.min(score, 100));
+  const breakdown = {
+    completeness: Math.round(completeness * 35),
+    evidence: Math.round(evidence * 25),
+    consistency: Math.round(consistency * 20),
+    freshness: Math.round(freshness * 10),
+    health: Math.round(health * 10),
+  };
+  return {
+    score: Math.min(Object.values(breakdown).reduce((sum, value) => sum + value, 0), 100),
+    breakdown,
+  };
 }
 
-export function createReport(jobId: string, product: Record<string, unknown>, rows: StoredReview[]) {
+export function createReport(
+  jobId: string,
+  product: Record<string, unknown>,
+  rows: StoredReview[],
+  context: ReportContext = {},
+) {
   const included = rows.filter((review) => ["included", "uncertain"].includes(review.classification));
   const excluded = rows.length - included.length;
   const sampleNotice = included.length < 50
@@ -81,6 +122,14 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
     rating_mismatch: rows.filter((review) => review.classification === "rating_mismatch").length,
     uncertain: rows.filter((review) => review.classification === "uncertain").length,
   };
+  const confidenceResult = confidence(
+    included,
+    excluded,
+    Math.max(strengths[0]?.mentions ?? 0, cautions[0]?.mentions ?? 0),
+    context,
+  );
+  const sourceReviewCount = Object.values(context.sourceDistribution ?? {})
+    .reduce((sum, count) => sum + (count ?? 0), 0);
 
   return {
     id: jobId,
@@ -92,10 +141,15 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
     verdict,
     analysis,
     analysisProvider: "rules",
-    confidence: confidence(included, excluded),
+    confidence: confidenceResult.score,
+    confidenceBreakdown: confidenceResult.breakdown,
     confidenceReasons: [
-      `별점별 정상 리뷰 ${included.length}개 반영`,
-      `의심 신호 ${excluded}개를 주 분석에서 제외`,
+      sourceReviewCount
+        ? `원본 리뷰 ${sourceReviewCount}개 확인 · 별점별 분석 ${included.length}개 반영`
+        : `별점별 정상 리뷰 ${included.length}개 반영`,
+      excluded
+        ? `의심 신호 ${excluded}개를 주 분석에서 제외`
+        : "자동 규칙에서 제외 신호가 발견되지 않음",
     ],
     sampleNotice,
     strengths,
@@ -106,6 +160,7 @@ export function createReport(jobId: string, product: Record<string, unknown>, ro
       const accepted = ratingRows.filter((review) => ["included", "uncertain"].includes(review.classification));
       return {
         rating,
+        sourceCount: context.sourceDistribution?.[rating],
         checked: ratingRows.length,
         included: accepted.length,
         excluded: ratingRows.length - accepted.length,

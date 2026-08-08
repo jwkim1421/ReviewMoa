@@ -288,7 +288,7 @@ export function App() {
   }
 
   return (
-    <main>
+    <main className={`view-${view}`}>
       <Nav onHome={reset} onIdeas={showIdeas} ideasActive={view === "ideas"} />
       {view === "home" && <Home url={url} setUrl={setUrl} onSubmit={submit} error={error} />}
       {view === "probing" && (
@@ -618,6 +618,7 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
   const [openRating, setOpenRating] = useState<number | null>(null);
   const confidenceLabel = report.confidence >= 80 ? "높음" : report.confidence >= 60 ? "보통" : "낮음";
   const totalIncluded = useMemo(() => report.ratings.reduce((sum, item) => sum + item.included, 0), [report]);
+  const anomalyTotal = Object.values(report.anomalyCounts).reduce((sum, count) => sum + count, 0);
   const sampleNotice = report.sampleNotice ?? (
     totalIncluded < 50
       ? totalIncluded
@@ -681,11 +682,11 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
       <details className="confidence-explain">
         <summary>신뢰도 점수는 어떻게 계산하나요?</summary>
         <div>
-          <span><strong>35%</strong> 별점별 수집 완성도</span>
-          <span><strong>25%</strong> 반복 근거의 강도</span>
-          <span><strong>20%</strong> 의견의 일관성</span>
-          <span><strong>10%</strong> 리뷰 최신성</span>
-          <span><strong>10%</strong> 의심 신호를 제외한 데이터 건전성</span>
+          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.completeness}/35` : "35%"}</strong> 별점별 수집 완성도</span>
+          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.evidence}/25` : "25%"}</strong> 분석 리뷰의 충분성</span>
+          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.consistency}/20` : "20%"}</strong> 반복 의견의 강도</span>
+          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.freshness}/10` : "10%"}</strong> 리뷰 최신성</span>
+          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.health}/10` : "10%"}</strong> 의심 신호를 제외한 데이터 건전성</span>
         </div>
         <p>구매 성공 확률이 아니라, 이번 결론을 뒷받침하는 리뷰 데이터가 얼마나 충분하고 일관적인지를 나타냅니다.</p>
       </details>
@@ -713,8 +714,11 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
                 >
                   <span className="rating-number">{item.rating}<Star size={16} fill="currentColor" /></span>
                   <span className="rating-copy">
-                    <strong>{item.rating}점 리뷰: {item.included.toLocaleString()}개</strong>
-                    <small>검사 {item.checked}개 · 정상 {item.included}개 · 제외 {item.excluded}개</small>
+                    <strong>{item.rating}점 리뷰: {(item.sourceCount ?? item.included).toLocaleString()}개</strong>
+                    <small>
+                      {item.sourceCount !== undefined && `원본 ${item.sourceCount}개 · `}
+                      분석 {item.checked}개 · 정상 {item.included}개 · 제외 {item.excluded}개
+                    </small>
                   </span>
                   {canOpen && (
                     <span className="review-toggle">
@@ -740,7 +744,13 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
       </section>
 
       <section className="anomaly-card">
-        <div><span className="section-label">제외된 리뷰 신호</span><h2>결론에서 덜어낸 리뷰</h2><p>거짓 리뷰로 단정하지 않고, 분석 신호에서만 분리했습니다.</p></div>
+        <div>
+          <span className="section-label">제외된 리뷰 신호</span>
+          <h2>{anomalyTotal ? "결론에서 덜어낸 리뷰" : "분리된 리뷰 신호가 없어요"}</h2>
+          <p>{anomalyTotal
+            ? "거짓 리뷰로 단정하지 않고, 분석 신호에서만 분리했습니다."
+            : "자동 규칙에서 제외 신호가 발견되지 않았습니다. 0개가 리뷰 진위를 보증한다는 뜻은 아닙니다."}</p>
+        </div>
         <div className="anomaly-stats">
           <span><strong>{report.anomalyCounts.sponsored}</strong>광고성 의심</span>
           <span><strong>{report.anomalyCounts.duplicate}</strong>중복</span>

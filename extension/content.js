@@ -1567,7 +1567,7 @@ function extractDate(node) {
   const text = node.textContent || "";
   const absolute = text.match(/20\d{2}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}/);
   if (absolute) return absolute[0].replace(/[.\s]/g, "-").replace(/-+$/, "");
-  const short = text.match(/(?:^|\s)(\d{2})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})(?:\.|\s|$)/);
+  const short = text.match(/(?:^|[^\d])(\d{2})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})(?:\.|\s|$)/);
   if (short) {
     return `20${short[1]}-${short[2].padStart(2, "0")}-${short[3].padStart(2, "0")}`;
   }

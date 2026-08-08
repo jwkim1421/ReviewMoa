@@ -89,6 +89,36 @@ describe("createReport sample notice", () => {
     ]));
     expect(report.analysis.negative).not.toContain("옵션 차이");
   });
+
+  it("scores completeness against the verified source distribution", () => {
+    const sourceDistribution = { 1: 1, 2: 2, 3: 9, 4: 33, 5: 398 } as const;
+    const rows: StoredReview[] = ([5, 4, 3, 2, 1] as const).flatMap((rating) =>
+      Array.from(
+        { length: Math.min(sourceDistribution[rating], 100) },
+        (_, index): StoredReview => ({
+          review_id: `${rating}-${index}`,
+          rating,
+          content: "아이가 좋아하고 관심을 보이며 잘 놀아서 만족합니다.",
+          created_at: new Date().toISOString(),
+          option_name: undefined,
+          classification: "included",
+        }),
+      ),
+    );
+
+    const report = createReport("job-verified", { name: "검증 상품" }, rows, {
+      sourceDistribution,
+    });
+
+    expect(report.confidence).toBe(87);
+    expect(report.confidenceReasons).toContain("자동 규칙에서 제외 신호가 발견되지 않음");
+    expect(report.ratings.find(({ rating }) => rating === 5)).toMatchObject({
+      sourceCount: 398,
+      checked: 100,
+      included: 100,
+      excluded: 0,
+    });
+  });
 });
 
 describe("AI fallback", () => {

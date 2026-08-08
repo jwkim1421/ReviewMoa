@@ -45,6 +45,7 @@ type CollectorHooks = {
     options?: { requireFullDistribution?: boolean },
   ): { ok: boolean; reason?: string };
   extractRating(node: Element): number | null;
+  extractDate(node: Element): string | undefined;
   readVisibleReviews(
     config: unknown,
     options: {
@@ -544,6 +545,13 @@ describe("review collector", () => {
 
     expect(reviews).toHaveLength(1);
     expect(reviews[0]).toMatchObject({ id: "bare-four-star", rating: 4 });
+  });
+
+  it("reads a compact Naver date attached directly to the masked buyer name", () => {
+    const card = document.createElement("article");
+    card.textContent = "buyer******26.05.08.신고";
+
+    expect(collector.extractDate(card)).toBe("2026-05-08");
   });
 
   it("reads the source rating distribution from the dialog header outside the inner review list", () => {

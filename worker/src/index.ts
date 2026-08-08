@@ -289,9 +289,11 @@ async function buildReport(
     summaryOnly?: boolean;
     mobileSafari?: boolean;
     skipAi?: boolean;
+    collectorDiagnostics?: unknown;
   },
 ) {
-  let report = createReport(jobId, JSON.parse(productJson), rows);
+  const sourceDistribution = readCollectorSourceDistribution(options?.collectorDiagnostics);
+  let report = createReport(jobId, JSON.parse(productJson), rows, { sourceDistribution });
   if (options?.summaryOnly) {
     report.limitations.push(
       "전체 리뷰 목록을 자동으로 열지 못해 상품 페이지에 공개된 대표 리뷰만 반영했습니다.",
@@ -322,6 +324,19 @@ async function buildReport(
     report.limitations.push("AI 분석을 사용할 수 없어 규칙 기반 결과를 표시합니다.");
   }
   return report;
+}
+
+function readCollectorSourceDistribution(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = (value as { sourceDistribution?: unknown }).sourceDistribution;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
+  const distribution = {} as Partial<Record<1 | 2 | 3 | 4 | 5, number>>;
+  for (const rating of [1, 2, 3, 4, 5] as const) {
+    const count = (candidate as Record<string, unknown>)[String(rating)];
+    if (!Number.isInteger(count) || Number(count) < 0) return undefined;
+    distribution[rating] = Number(count);
+  }
+  return distribution;
 }
 
 async function handle(request: Request, env: AppEnv) {
@@ -1219,6 +1234,7 @@ async function handle(request: Request, env: AppEnv) {
       const report = await buildReport(env, jobId, JSON.stringify(product), rows, {
         summaryOnly: body.partialReason === "summary_only",
         mobileSafari: true,
+        collectorDiagnostics: body.collectorDiagnostics,
       });
       const finalStatus = rows.length && body.partialReason !== "summary_only"
         ? "completed"

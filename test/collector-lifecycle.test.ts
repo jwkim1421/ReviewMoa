@@ -214,6 +214,9 @@ describe("fixture collector lifecycle", () => {
           body: JSON.stringify({
             operatorToken: created.operatorToken,
             reviews: fixture.reviews.slice(0, 2),
+            collectorDiagnostics: {
+              sourceDistribution: { 1: 0, 2: 0, 3: 0, 4: 1, 5: 1 },
+            },
           }),
         }),
         env,
@@ -225,6 +228,10 @@ describe("fixture collector lifecycle", () => {
         report: {
           confidenceReasons: expect.arrayContaining([
             "iPhone Safari에서 사용자가 보안 확인 후 수집한 공개 리뷰를 반영",
+          ]),
+          ratings: expect.arrayContaining([
+            expect.objectContaining({ rating: 5, sourceCount: 1 }),
+            expect.objectContaining({ rating: 4, sourceCount: 1 }),
           ]),
         },
       });

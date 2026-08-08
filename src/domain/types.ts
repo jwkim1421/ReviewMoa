@@ -88,6 +88,7 @@ export interface RawReview {
 
 export interface RatingSummary {
   rating: 1 | 2 | 3 | 4 | 5;
+  sourceCount?: number;
   checked: number;
   included: number;
   excluded: number;
@@ -110,6 +111,13 @@ export interface Report {
   };
   analysisProvider?: "openrouter" | "openai" | "rules";
   confidence: number;
+  confidenceBreakdown?: {
+    completeness: number;
+    evidence: number;
+    consistency: number;
+    freshness: number;
+    health: number;
+  };
   confidenceReasons: string[];
   sampleNotice?: string;
   strengths: Array<{ label: string; mentions: number; ratio: number }>;
