@@ -11,7 +11,7 @@
 |---|---|---|
 | P0-1 네이버 전용 어댑터 안정성 | 코드 보강 완료, 실기기 추가 검증 대기 | 2026-08-09 · 확장 0.1.25 |
 | P0-2 구조화된 오류 진단과 운영자 화면 | 코드 완료, secret 등록·배포 대기 | 2026-08-09 |
-| P0-3 자동 회귀 테스트와 네이버 canary | 완료, 첫 정기 workflow 실행 대기 | 2026-08-09 |
+| P0-3 자동 회귀 테스트와 네이버 canary | 완료, workflow 푸시 권한 갱신·첫 정기 실행 대기 | 2026-08-10 |
 | P0-4 TestFlight 가족 베타 | 코드·로컬 Archive 완료, Apple 멤버십 활성화 대기 | 2026-08-10 · 0.1.25 (126) |
 | P0-5~P2-4 | 대기 | 항목별 순차 진행 |
 
@@ -253,6 +253,34 @@ AI 자동 오류 수정과 자동 배포는 보류한다. 재검토하더라도 
   결과 확인은 운영 반영 후 남아 있다.
 - 격리된 로컬 Chrome으로 첫 수동 canary를 한 번 실행했고 네이버 시스템 오류가
   `operator_required` / `blocked` / 종료 코드 2로 재시도 없이 중단되는 것을 확인했다.
+
+**GitHub 인증과 Actions 권한 업데이트 (2026-08-10)**
+
+- 커밋 `2bccc8d`를 `origin/master`에 처음 푸시할 때 GitHub가
+  `.github/workflows/naver-canary.yml` 생성 요청을 거부했다.
+- 원인은 코드나 저장소 쓰기 권한이 아니라, HTTPS Git 인증에 사용한 GitHub CLI OAuth
+  토큰에 `repo` 범위만 있고 `workflow` 범위가 없었던 것이다.
+- GitHub OAuth의 `workflow` 범위는 사용자가 원래 접근 가능한 저장소에서
+  `.github/workflows/` 아래의 Actions workflow 파일을 추가하거나 수정할 수 있게 한다.
+  저장소에 대한 기존 사용자 권한을 넘어서는 새로운 관리자 권한을 주지는 않는다.
+- 다음 명령으로 GitHub CLI 토큰의 범위를 갱신하고 브라우저 기기 인증을 승인했다.
+
+  ```bash
+  gh auth refresh -h github.com -s workflow
+  ```
+
+- 갱신 후 `gh auth status`에서 `gist`, `read:org`, `repo`, `workflow` 범위를 확인했고,
+  동일 커밋을 `origin/master`에 정상 푸시했다. 토큰 원문은 macOS 키체인에 보관되며
+  저장소와 이 문서에는 기록하지 않는다.
+- 이 OAuth `workflow` 범위는 개발자 PC에서 workflow YAML을 **푸시하는 권한**이다.
+  Actions 실행 중 GitHub가 발급하는 `GITHUB_TOKEN` 권한과는 별개다.
+- workflow 실행 권한은 각 YAML의 `permissions:`에서 최소 범위로 제한한다.
+  품질 게이트와 네이버 canary는 `contents: read`, Pages 배포는 `contents: read`,
+  `pages: write`, `id-token: write`만 사용한다. 저장소의 전역 Actions 권한 설정이나
+  GitHub Secret 값은 이번 갱신에서 변경하지 않았다.
+- 향후 같은 거부 메시지가 나오면 `gh auth status`로 `workflow` 범위를 확인한다.
+  권한을 철회하려면 GitHub 계정의 `Settings → Applications → Authorized OAuth Apps`에서
+  GitHub CLI 승인을 재검토하거나 철회한 뒤 필요한 최소 범위로 다시 인증한다.
 
 **업데이트 위치**
 
