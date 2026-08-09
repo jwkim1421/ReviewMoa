@@ -26,6 +26,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (payload?.error === "TEMPORARY_DATABASE_ERROR") {
       throw new Error("저장소 응답이 잠시 지연되고 있습니다. 잠시 후 다시 시도해 주세요.");
     }
+    if (payload?.error === "UNAUTHORIZED") {
+      throw new Error("운영자 인증 정보가 올바르지 않습니다.");
+    }
     throw new Error(payload?.error ?? "요청에 실패했습니다.");
   }
   return response.json() as Promise<T>;
@@ -62,5 +65,83 @@ export function refreshJob(
   return request<CreateJobResult>(`/v1/jobs/${encodeURIComponent(jobId)}/refresh`, {
     method: "POST",
     body: options ? JSON.stringify(options) : undefined,
+  });
+}
+
+export interface AdminMetric {
+  total: number;
+  successful: number;
+  failed: number;
+}
+
+export interface AdminDiagnosticJob {
+  id: string;
+  product: {
+    source: string;
+    sourceLabel?: string;
+    productId: string;
+  };
+  status: string;
+  statusGroup: "successful" | "failed" | "waiting" | "active";
+  errorCode?: string | null;
+  interruptionReason?: string | null;
+  collector?: string | null;
+  handoffSource?: string | null;
+  attemptCount: number;
+  retryable: boolean;
+  requestedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  updatedAt: string;
+  progress?: {
+    stage?: string;
+    source?: string;
+    rating?: number;
+    checked?: number;
+    accepted?: number;
+    extensionVersion?: string;
+    diagnostics?: {
+      adapter?: string;
+      pageKind?: string;
+      mobile?: boolean;
+      failure?: string;
+      collectionStrategy?: string;
+      ready?: boolean;
+      summaryDetected?: boolean;
+      attemptCount?: number;
+      sourceDistribution?: Record<string, number>;
+      ratingDistribution?: Record<string, number>;
+      collectionTargets?: Record<string, number>;
+      validation?: { ok?: boolean; reason?: string };
+      sourceTotal?: {
+        ok?: boolean;
+        reason?: string;
+        displayedReviewTotal?: number;
+        sourceReviewCount?: number;
+      };
+    };
+  };
+}
+
+export interface AdminDiagnostics {
+  generatedAt: string;
+  limit: number;
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+    waiting: number;
+    active: number;
+    successRate: number | null;
+    bySource: Record<string, AdminMetric>;
+    byExtensionVersion: Record<string, AdminMetric>;
+    byErrorCode: Record<string, number>;
+  };
+  jobs: AdminDiagnosticJob[];
+}
+
+export function getAdminDiagnostics(token: string, limit = 50) {
+  return request<AdminDiagnostics>(`/v1/admin/diagnostics?limit=${limit}`, {
+    headers: { Authorization: `Bearer ${token}` },
   });
 }

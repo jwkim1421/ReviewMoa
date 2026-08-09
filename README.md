@@ -80,12 +80,15 @@ npx wrangler d1 create reviewmoa
 ```bash
 npx wrangler secret put OPENROUTER_API_KEY --config worker/wrangler.toml
 npx wrangler secret put COLLECTOR_TOKEN --config worker/wrangler.toml
+npx wrangler secret put ADMIN_TOKEN --config worker/wrangler.toml
 ```
 
 기본 모델은 무료 모델 중 요청 기능을 지원하는 모델을 고르는 `openrouter/free`다.
 OpenRouter 호출이 실패하거나 한도에 도달하면 규칙 기반 분석 결과를 유지한다.
 `COLLECTOR_TOKEN`은 중앙 수집기의 claim과 heartbeat 요청을 인증하며, 프런트 번들이나
-저장소 파일에는 넣지 않는다.
+저장소 파일에는 넣지 않는다. `ADMIN_TOKEN`은 `/#admin` 운영 진단 화면 전용이며 URL,
+프런트 환경 변수, 저장소 파일에 넣지 않는다. 운영 화면은 토큰을 현재 브라우저 탭의
+세션 저장소에만 보관한다.
 
 4. 마이그레이션과 Worker를 배포한다.
 
@@ -103,6 +106,15 @@ https://reviewmoa-api.<내-workers.dev-서브도메인>.workers.dev
 이 주소가 `VITE_API_BASE`다. 별도로 발급받는 키가 아니라, 리뷰모아 API Worker의
 공개 기본 URL이다. Cloudflare 대시보드의 `Workers & Pages → reviewmoa-api →
 Settings → Domains & Routes`에서도 확인할 수 있다.
+
+## 운영 진단 화면
+
+배포된 웹 주소 뒤에 `/#admin`을 붙여 접속한다. 예: `https://reviewmoa.kro.kr/#admin`.
+Worker에 secret으로 등록한 `ADMIN_TOKEN`을 입력하면 최근 작업 50건의 성공률, 사이트와
+확장 버전별 결과, 오류 유형, 재시도 가능 여부와 정제된 수집 진단을 확인할 수 있다.
+
+운영 응답에는 상품 URL, 상품명, 리뷰 원문, 쿠키, 작업 인계 토큰과 DOM 제어 원문을
+포함하지 않는다. 공개 작업 조회 API에서도 내부 `collectorDiagnostics`는 제거된다.
 
 6. GitHub 저장소의 `Settings → Secrets and variables → Actions → Variables`에서
 `VITE_API_BASE`라는 Repository variable을 만들고 위 URL을 값으로 등록한다.

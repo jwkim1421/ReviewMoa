@@ -117,6 +117,205 @@ function collectorAuthorized(request: Request, env: AppEnv) {
   return Boolean(token && request.headers.get("Authorization") === `Bearer ${token}`);
 }
 
+function adminAuthorized(request: Request, env: AppEnv) {
+  const token = env.ADMIN_TOKEN?.trim();
+  return Boolean(token && request.headers.get("Authorization") === `Bearer ${token}`);
+}
+
+function parseRecord(value: string | null | undefined) {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeText(value: unknown, maxLength = 240) {
+  return typeof value === "string" ? value.slice(0, maxLength) : undefined;
+}
+
+function safeCount(value: unknown) {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
+}
+
+function safeBoolean(value: unknown) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function publicJobProgress(value: string | null) {
+  const progress = parseRecord(value);
+  if (!progress) return undefined;
+  return {
+    stage: safeText(progress.stage, 80),
+    source: safeText(progress.source, 80),
+    rating: safeCount(progress.rating),
+    checked: safeCount(progress.checked),
+    accepted: safeCount(progress.accepted),
+    message: safeText(progress.message, 300),
+  };
+}
+
+function safeNumberMap(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, count]) => Number.isInteger(count) && Number(count) >= 0)
+    .slice(0, 10);
+  return entries.length ? Object.fromEntries(entries.map(([key, count]) => [key, Number(count)])) : undefined;
+}
+
+function safeDiagnosticProgress(value: string | null) {
+  const progress = parseRecord(value);
+  if (!progress) return undefined;
+  const diagnostics = progress.collectorDiagnostics &&
+      typeof progress.collectorDiagnostics === "object" &&
+      !Array.isArray(progress.collectorDiagnostics)
+    ? progress.collectorDiagnostics as Record<string, unknown>
+    : undefined;
+  const validation = diagnostics?.validation &&
+      typeof diagnostics.validation === "object" &&
+      !Array.isArray(diagnostics.validation)
+    ? diagnostics.validation as Record<string, unknown>
+    : undefined;
+  const sourceTotal = diagnostics?.sourceTotal &&
+      typeof diagnostics.sourceTotal === "object" &&
+      !Array.isArray(diagnostics.sourceTotal)
+    ? diagnostics.sourceTotal as Record<string, unknown>
+    : undefined;
+
+  return {
+    stage: safeText(progress.stage, 80),
+    source: safeText(progress.source, 80),
+    rating: safeCount(progress.rating),
+    checked: safeCount(progress.checked),
+    accepted: safeCount(progress.accepted),
+    extensionVersion: safeText(progress.extensionVersion, 40),
+    diagnostics: diagnostics
+      ? {
+          adapter: safeText(diagnostics.adapter, 80),
+          pageKind: safeText(diagnostics.pageKind, 80),
+          mobile: safeBoolean(diagnostics.mobile),
+          failure: safeText(diagnostics.failure, 160),
+          collectionStrategy: safeText(diagnostics.collectionStrategy, 80),
+          ready: safeBoolean(diagnostics.ready),
+          summaryDetected: safeBoolean(diagnostics.summaryDetected),
+          attemptCount: Array.isArray(diagnostics.attempts) ? diagnostics.attempts.length : undefined,
+          sourceDistribution: safeNumberMap(diagnostics.sourceDistribution),
+          ratingDistribution: safeNumberMap(diagnostics.ratingDistribution),
+          collectionTargets: safeNumberMap(diagnostics.collectionTargets),
+          validation: validation
+            ? { ok: safeBoolean(validation.ok), reason: safeText(validation.reason, 160) }
+            : undefined,
+          sourceTotal: sourceTotal
+            ? {
+                ok: safeBoolean(sourceTotal.ok),
+                reason: safeText(sourceTotal.reason, 160),
+                displayedReviewTotal: safeCount(sourceTotal.displayedReviewTotal),
+                sourceReviewCount: safeCount(sourceTotal.sourceReviewCount),
+              }
+            : undefined,
+        }
+      : undefined,
+  };
+}
+
+function adminStatusGroup(status: string): "successful" | "failed" | "waiting" | "active" {
+  if (["completed", "partial"].includes(status)) return "successful";
+  if (["failed", "cancelled"].includes(status)) return "failed";
+  if (["waiting_for_login", "waiting_for_user", "waiting_for_operator"].includes(status)) {
+    return "waiting";
+  }
+  return "active";
+}
+
+interface AdminJobRow {
+  id: string;
+  product_json: string;
+  status: string;
+  error_code: string | null;
+  progress_json: string | null;
+  interruption_reason: string | null;
+  claimed_by: string | null;
+  handoff_source: string | null;
+  attempt_count: number | null;
+  requested_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function serializeAdminJob(row: AdminJobRow) {
+  const product = parseRecord(row.product_json);
+  const progress = safeDiagnosticProgress(row.progress_json);
+  return {
+    id: row.id,
+    product: {
+      source: safeText(product?.source, 40) ?? "unknown",
+      sourceLabel: safeText(product?.sourceLabel, 40),
+      productId: safeText(product?.productId, 120) ?? "unknown",
+    },
+    status: row.status,
+    statusGroup: adminStatusGroup(row.status),
+    errorCode: row.error_code,
+    interruptionReason: row.interruption_reason,
+    collector: row.claimed_by,
+    handoffSource: row.handoff_source,
+    attemptCount: row.attempt_count ?? 0,
+    retryable: [
+      "partial",
+      "failed",
+      "cancelled",
+      "waiting_for_login",
+      "waiting_for_user",
+      "waiting_for_operator",
+    ].includes(row.status),
+    requestedAt: row.requested_at ?? row.created_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    updatedAt: row.updated_at,
+    progress,
+  };
+}
+
+function summarizeAdminJobs(jobs: ReturnType<typeof serializeAdminJob>[]) {
+  const status = { successful: 0, failed: 0, waiting: 0, active: 0 };
+  const bySource: Record<string, { total: number; successful: number; failed: number }> = {};
+  const byExtensionVersion: Record<string, { total: number; successful: number; failed: number }> = {};
+  const byErrorCode: Record<string, number> = {};
+
+  for (const job of jobs) {
+    status[job.statusGroup] += 1;
+    const source = job.product.source;
+    bySource[source] ??= { total: 0, successful: 0, failed: 0 };
+    bySource[source].total += 1;
+    if (job.statusGroup === "successful") bySource[source].successful += 1;
+    if (job.statusGroup === "failed") bySource[source].failed += 1;
+
+    const version = job.progress?.extensionVersion;
+    if (version) {
+      byExtensionVersion[version] ??= { total: 0, successful: 0, failed: 0 };
+      byExtensionVersion[version].total += 1;
+      if (job.statusGroup === "successful") byExtensionVersion[version].successful += 1;
+      if (job.statusGroup === "failed") byExtensionVersion[version].failed += 1;
+    }
+    if (job.errorCode) byErrorCode[job.errorCode] = (byErrorCode[job.errorCode] ?? 0) + 1;
+  }
+
+  const terminal = status.successful + status.failed;
+  return {
+    total: jobs.length,
+    ...status,
+    successRate: terminal ? Math.round(status.successful / terminal * 100) : null,
+    bySource,
+    byExtensionVersion,
+    byErrorCode,
+  };
+}
+
 function collectorLeaseMs(env: AppEnv) {
   const configured = Number(env.COLLECTOR_LEASE_MS);
   return Number.isFinite(configured)
@@ -348,6 +547,33 @@ async function handle(request: Request, env: AppEnv) {
   const collectorPath = url.pathname.startsWith("/v1/collector/");
   if (collectorPath && !collectorAuthorized(request, env)) {
     return json({ error: "UNAUTHORIZED" }, 401, origin);
+  }
+
+  const adminPath = url.pathname.startsWith("/v1/admin/");
+  if (adminPath && !adminAuthorized(request, env)) {
+    return json({ error: "UNAUTHORIZED" }, 401, origin);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/admin/diagnostics") {
+    const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+    const limit = Number.isInteger(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 100)
+      : 50;
+    const result = await env.DB.prepare(
+      `SELECT id, product_json, status, error_code, progress_json,
+              interruption_reason, claimed_by, handoff_source, attempt_count,
+              requested_at, started_at, finished_at, created_at, updated_at
+       FROM jobs
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+    ).bind(limit).all<AdminJobRow>();
+    const jobs = result.results.map(serializeAdminJob);
+    return json({
+      generatedAt: new Date().toISOString(),
+      limit,
+      summary: summarizeAdminJobs(jobs),
+      jobs,
+    }, 200, origin);
   }
 
   await cleanup(env);
@@ -882,7 +1108,7 @@ async function handle(request: Request, env: AppEnv) {
       status: job.status,
       product: JSON.parse(job.product_json),
       capability: job.capability_json ? JSON.parse(job.capability_json) : undefined,
-      progress: job.progress_json ? JSON.parse(job.progress_json) : undefined,
+      progress: publicJobProgress(job.progress_json),
       interruptionReason: job.interruption_reason,
       errorCode: job.error_code,
       requestedAt: job.requested_at ?? job.created_at,

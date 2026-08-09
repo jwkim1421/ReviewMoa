@@ -13,7 +13,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run worker:check
+      - name: Run release quality gate
+        run: npm run release:gate
       - name: Apply D1 migrations
         uses: cloudflare/wrangler-action@v3
         with:

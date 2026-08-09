@@ -7,6 +7,15 @@ const target = resolve(root, "safari", "package");
 const generatedRoot = resolve(root, "safari", "generated", "ReviewMoa");
 const generatedResources = resolve(generatedRoot, "ReviewMoa Extension", "Resources");
 const generatedProject = resolve(generatedRoot, "ReviewMoa.xcodeproj", "project.pbxproj");
+const generatedApp = resolve(generatedRoot, "ReviewMoa");
+const generatedAppInfo = resolve(generatedApp, "Info.plist");
+const generatedAppIconSet = resolve(
+  generatedApp,
+  "Assets.xcassets",
+  "AppIcon.appiconset",
+);
+const appTemplate = resolve(root, "safari", "app-template");
+const releasePath = resolve(root, "safari", "release.json");
 const files = [
   "manifest.json",
   "background.js",
@@ -26,6 +35,15 @@ await Promise.all(files.map((file) =>
 
 const manifestPath = resolve(target, "manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+const release = JSON.parse(await readFile(releasePath, "utf8"));
+if (
+  !/^([a-zA-Z][a-zA-Z0-9-]*\.)+[a-zA-Z][a-zA-Z0-9-]*$/.test(release.bundleIdentifier) ||
+  release.extensionBundleIdentifier !== `${release.bundleIdentifier}.Extension` ||
+  !Number.isInteger(release.buildNumber) ||
+  release.buildNumber < 1
+) {
+  throw new Error("safari/release.json의 Bundle ID 또는 buildNumber가 올바르지 않습니다.");
+}
 delete manifest.background?.type;
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
@@ -46,27 +64,65 @@ await writeFile(
 
 const generatedProjectSource = await readFile(generatedProject, "utf8").catch(() => null);
 if (generatedProjectSource) {
+  const generatedAppInfoSource = await readFile(generatedAppInfo, "utf8");
+  const updatedAppInfo = generatedAppInfoSource.includes("ITSAppUsesNonExemptEncryption")
+    ? generatedAppInfoSource
+    : generatedAppInfoSource.replace(
+      /<\/dict>\s*<\/plist>\s*$/,
+      "\t<key>ITSAppUsesNonExemptEncryption</key>\n\t<false/>\n</dict>\n</plist>\n",
+    );
   await mkdir(generatedResources, { recursive: true });
+  await mkdir(resolve(generatedApp, "Resources", "Base.lproj"), { recursive: true });
+  await mkdir(generatedAppIconSet, { recursive: true });
   await Promise.all(files.map((file) =>
     copyFile(resolve(target, file), resolve(generatedResources, file))
   ));
+  await Promise.all([
+    copyFile(
+      resolve(appTemplate, "Main.html"),
+      resolve(generatedApp, "Resources", "Base.lproj", "Main.html"),
+    ),
+    copyFile(resolve(appTemplate, "Style.css"), resolve(generatedApp, "Resources", "Style.css")),
+    copyFile(resolve(appTemplate, "ViewController.swift"), resolve(generatedApp, "ViewController.swift")),
+    copyFile(resolve(appTemplate, "AppIcon.png"), resolve(generatedAppIconSet, "AppIcon.png")),
+    copyFile(resolve(appTemplate, "AppIcon.png"), resolve(generatedApp, "Resources", "Icon.png")),
+    writeFile(generatedAppInfo, updatedAppInfo),
+    writeFile(
+      resolve(generatedAppIconSet, "Contents.json"),
+      `${JSON.stringify({
+        images: [
+          {
+            filename: "AppIcon.png",
+            idiom: "universal",
+            platform: "ios",
+            size: "1024x1024",
+          },
+        ],
+        info: { author: "xcode", version: 1 },
+      }, null, 2)}\n`,
+    ),
+  ]);
 
-  const [major = 0, minor = 0, patch = 0] = String(manifest.version)
-    .split(".")
-    .map((value) => Number.parseInt(value, 10) || 0);
-  const buildNumber = major * 10_000 + minor * 100 + patch;
   const updatedProject = generatedProjectSource
     .replace(
       /CURRENT_PROJECT_VERSION = \d+;/g,
-      `CURRENT_PROJECT_VERSION = ${Math.max(buildNumber, 1)};`,
+      `CURRENT_PROJECT_VERSION = ${release.buildNumber};`,
     )
     .replace(
       /MARKETING_VERSION = [^;]+;/g,
       `MARKETING_VERSION = ${manifest.version};`,
+    )
+    .replace(
+      /PRODUCT_BUNDLE_IDENTIFIER = [^;]+\.Extension;/g,
+      `PRODUCT_BUNDLE_IDENTIFIER = ${release.extensionBundleIdentifier};`,
+    )
+    .replace(
+      /PRODUCT_BUNDLE_IDENTIFIER = (?![^;]*\.Extension;)[^;]+;/g,
+      `PRODUCT_BUNDLE_IDENTIFIER = ${release.bundleIdentifier};`,
     );
   await writeFile(generatedProject, updatedProject);
   console.log(
-    `Xcode 프로젝트 동기화 완료: ${manifest.version} (${Math.max(buildNumber, 1)})`,
+    `Xcode 프로젝트 동기화 완료: ${manifest.version} (${release.buildNumber})`,
   );
 }
 

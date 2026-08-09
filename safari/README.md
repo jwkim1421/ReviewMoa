@@ -35,6 +35,14 @@ Apple의 `safari-web-extension-packager`로 `safari/generated/` 아래에 iOS �
 확장 Xcode 프로젝트를 만든다. 생성물은 로컬 서명 설정을 포함할 수 있어 Git에
 커밋하지 않는다.
 
+`safari:package`는 Xcode 프로젝트를 처음 만들거나 Apple 변환기를 다시 실행해야 할
+때만 사용한다. 평소 확장과 첫 실행 안내 화면을 기존 프로젝트에 동기화할 때는 다음
+명령을 사용한다.
+
+```bash
+npm run safari:prepare
+```
+
 Xcode 설치 후 다음을 확인한다.
 
 ```bash
@@ -42,7 +50,7 @@ xcodebuild -version
 xcrun --find safari-web-extension-packager
 ```
 
-## iPhone 테스트
+## iPhone 개발 테스트
 
 - 시뮬레이터 검증은 Apple Developer Program 가입 전에도 가능하다.
 - 무료 Apple 계정의 Personal Team으로 개인 iPhone에 설치해 테스트할 수 있다.
@@ -50,13 +58,88 @@ xcrun --find safari-web-extension-packager
 - TestFlight와 App Store 배포에는 Apple Developer Program 멤버십이 필요하다.
 - 생성된 `safari/generated/ReviewMoa/ReviewMoa.xcodeproj`를 Xcode에서 연다.
 - `ReviewMoa`와 `ReviewMoa Extension` 타깃의 `Signing & Capabilities`에서
-  `Automatically manage signing`을 켜고 같은 Personal Team을 선택한다.
+  `Automatically manage signing`을 켜고 같은 Apple Developer Team을 선택한다.
 - iOS 앱 scheme과 대상 iPhone을 선택해 실행한다.
 - iPhone의 `설정 → Safari → 확장 프로그램`에서 리뷰모아를 활성화한다.
 - `reviewmoa.kro.kr`과 대상 쇼핑몰에 대한 웹사이트 접근을 허용한다.
 
-운영 배포 전에는 App Store Connect/TestFlight 검증과 확장 권한 설명을 별도로
-마무리한다.
+## TestFlight 가족 베타 배포
+
+고정 식별자는 `safari/release.json`에서 관리한다.
+
+- 앱: `kr.reviewmoa.ReviewMoa`
+- Safari Extension: `kr.reviewmoa.ReviewMoa.Extension`
+
+두 타깃 모두 Xcode의 `Signing & Capabilities`에서 같은 유료 Apple Developer Team과
+자동 서명을 사용해야 한다. 앱 식별자를 바꾸면 기존 설치와 업데이트 연결이 끊어질 수
+있으므로 배포를 시작한 뒤에는 변경하지 않는다.
+
+### 1. 릴리스 빌드 준비
+
+다음 명령은 TestFlight에서 중복될 수 없는 빌드 번호를 1 증가시키고, 확장 리소스와
+앱 첫 실행 안내, 버전, Bundle ID, 1024px App Store 아이콘을 Xcode 프로젝트에
+동기화한다.
+
+```bash
+npm run safari:release:prepare
+```
+
+준비가 끝나면 Xcode에서 앱과 확장 타깃의 Team이 같은지 확인한다. 명령줄에서 Release
+Archive를 만들려면 다음 명령을 실행한다.
+
+```bash
+npm run safari:archive
+```
+
+아카이브는 `safari/build/ReviewMoa.xcarchive`에 생성되며 Git에는 포함되지 않는다.
+App Store Connect용 자동 재서명과 IPA 생성을 미리 검증하려면 다음을 실행한다.
+
+```bash
+npm run safari:export
+```
+
+성공하면 `safari/build/export/`에 배포 산출물이 생성된다. `Your session has expired`가
+표시되면 Xcode의 `Settings → Accounts`에서 Apple 계정을 다시 로그인한 뒤 두 타깃의
+Team을 확인하고 명령을 다시 실행한다. 로그인 세션이 유효해야 Xcode가 앱과 확장의
+App Store 배포 프로파일을 자동으로 만들거나 내려받을 수 있다.
+
+### 2. App Store Connect에 앱과 빌드 등록
+
+1. App Store Connect의 `나의 앱`에서 새 iOS 앱을 만든다.
+2. Bundle ID로 `kr.reviewmoa.ReviewMoa`를 선택하고 고유 SKU를 입력한다.
+3. Xcode에서 `Product → Archive`를 실행하거나 위 명령으로 만든 아카이브를
+   Organizer에서 연다.
+4. `Distribute App → App Store Connect → Upload` 순서로 업로드한다.
+5. App Store Connect의 TestFlight 탭에서 빌드 처리가 끝날 때까지 기다린다.
+
+같은 버전의 빌드를 다시 올릴 때도 빌드 번호는 반드시 달라야 한다. 업로드 전에
+App Store Connect 앱 레코드가 먼저 만들어져 있어야 한다.
+
+### 3. 아내를 외부 테스터로 초대
+
+App Store Connect 사용자가 아닌 가족은 외부 테스터에 해당한다.
+
+1. TestFlight의 내부 테스트 그룹을 먼저 만든다.
+2. 외부 테스트 그룹을 만들고 처리된 빌드를 추가한다.
+3. 베타 설명, 검토 연락처, 피드백 이메일과 테스트할 기능을 입력한다.
+4. 첫 외부 빌드를 TestFlight App Review에 제출한다.
+5. 승인 후 아내의 Apple 계정 이메일로 초대한다.
+6. 아내는 iPhone의 TestFlight 앱에서 초대를 수락하고 리뷰모아를 설치한다.
+
+TestFlight 빌드는 업로드 후 90일 동안 사용할 수 있다. 새 빌드는 같은 앱으로
+업데이트되므로 Personal Team처럼 7일마다 케이블을 연결할 필요는 없다.
+
+### 4. 가족 iPhone의 최초 설정
+
+리뷰모아 앱을 처음 열면 다음 안내가 표시된다.
+
+1. `설정 → 앱 → Safari → 확장 프로그램`에서 리뷰모아를 켠다.
+2. 웹사이트 접근 권한을 `항상 허용`으로 설정한다.
+3. 앱의 `리뷰모아 열기`를 눌러 실제 상품 URL로 수집을 한 번 확인한다.
+
+개인정보 처리방침 URL은 `https://reviewmoa.kro.kr/privacy.html`이다. 외부 테스트 제출
+전 App Store Connect의 검토 연락처와 피드백 이메일에는 실제로 확인 가능한 주소를
+입력한다.
 
 2026-07-31 기준 무료 Personal Team으로 실제 iPhone 설치, 개발자 신뢰, Safari 확장
 활성화와 네이버 상품 페이지의 팝업 실행까지 확인했다. 확장 0.1.5부터 iPhone 작업은

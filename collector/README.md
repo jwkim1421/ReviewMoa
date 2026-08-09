@@ -28,6 +28,27 @@
 중단한다. iPhone Safari 인계가 완료되면 휴대폰 확장이 같은 Safari 세션에서 직접
 리뷰를 수집하므로 Mac의 보안 쿠키나 로그인 정보를 휴대폰과 공유하지 않는다.
 
+## 네이버 실제 canary
+
+실제 공개 상품은 한 번만 열고 CAPTCHA, 로그인 요구, 접근 제한이 감지되면 우회나
+자동 재시도 없이 즉시 종료한다.
+
+```bash
+REVIEWMOA_HEADLESS=true \
+REVIEWMOA_PROFILE_DIR=/tmp/reviewmoa-canary-profile \
+npm run collector:canary -- https://m.brand.naver.com/store/products/123
+```
+
+기본 품질 기준은 전체 리뷰 목록, 리뷰 10개 이상, 별점 1~5 존재, 작성일 확인 비율
+50% 이상, 별점별 최신순, 중복 ID 없음, `더보기 이미지 펼치기` 문구 제거다. 정상은
+종료 코드 `0`, 수집 품질 미달은 `1`, CAPTCHA·로그인·접근 제한처럼 사람 확인이
+필요한 중단은 `2`를 반환한다. 실제 canary는 GitHub Actions에서 주 1회 한 상품만
+실행하며 배포 때마다 네이버에 접속하지 않는다.
+
+실제 Chrome canary는 사이트 구조 변경을 조기에 찾기 위한 보조 장치이며 iPhone
+Safari 실기기 검증을 대체하지 않는다. 배포 차단의 결정적 기준은 두 어댑터가 함께
+통과하는 로컬 fixture 회귀 테스트다.
+
 ## 설정
 
 `collector/.env.example`을 참고해 저장소 루트에 `.env.collector`를 만든다. 실제

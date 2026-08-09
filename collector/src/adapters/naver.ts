@@ -45,6 +45,14 @@ interface ExtractedReview {
   option?: string;
 }
 
+export function cleanNaverReviewContent(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/(?:더보기\s*)?(?:이미지\s*펼치기\s*)+$/u, "")
+    .trim();
+}
+
 export function extractNaverReviewNodes(nodes: Element[]): ExtractedReview[] {
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
   const textOf = (element: Element | null) => normalize(element?.textContent ?? "");
@@ -112,7 +120,7 @@ export function extractNaverReviewNodes(nodes: Element[]): ExtractedReview[] {
   const reviews: ExtractedReview[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
-    const content = firstText(node, [
+    const content = cleanNaverReviewContent(firstText(node, [
       "[data-review-content]",
       "[class*='review_text']",
       "[class*='reviewText']",
@@ -122,7 +130,7 @@ export function extractNaverReviewNodes(nodes: Element[]): ExtractedReview[] {
       "[class*='content']",
       "p",
       "span",
-    ]);
+    ]));
     const rating = ratingOf(node);
     if (!content || rating < 1 || rating > 5) continue;
 

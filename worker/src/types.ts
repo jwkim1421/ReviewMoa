@@ -2,6 +2,7 @@ export interface AppEnv extends Env {
   OPENROUTER_API_KEY?: string;
   OPENAI_API_KEY?: string;
   COLLECTOR_TOKEN?: string;
+  ADMIN_TOKEN?: string;
 }
 
 export interface CollectorJobRow {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductIdentity } from "../domain/types";
 
 vi.stubEnv("VITE_API_BASE", "https://reviewmoa-api.test");
-const { createJob, getJob, refreshJob } = await import("./api");
+const { createJob, getAdminDiagnostics, getJob, refreshJob } = await import("./api");
 
 const PRODUCT: ProductIdentity = {
   source: "naver",
@@ -93,6 +93,46 @@ describe("queued job API client", () => {
 
     await expect(refreshJob("job-1", { collector: "ios-safari" })).rejects.toThrow(
       "저장소 응답이 잠시 지연되고 있습니다",
+    );
+  });
+
+  it("sends the admin token only in the authorization header", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("https://reviewmoa-api.test/v1/admin/diagnostics?limit=25");
+      expect(init?.headers).toEqual({ Authorization: "Bearer admin-secret" });
+      expect(String(input)).not.toContain("admin-secret");
+      return Response.json({
+        generatedAt: "2026-08-09T00:00:00.000Z",
+        limit: 25,
+        summary: {
+          total: 0,
+          successful: 0,
+          failed: 0,
+          waiting: 0,
+          active: 0,
+          successRate: null,
+          bySource: {},
+          byExtensionVersion: {},
+          byErrorCode: {},
+        },
+        jobs: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAdminDiagnostics("admin-secret", 25)).resolves.toMatchObject({
+      limit: 25,
+      jobs: [],
+    });
+  });
+
+  it("shows a useful message when admin authentication fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      Response.json({ error: "UNAUTHORIZED" }, { status: 401 })
+    ));
+
+    await expect(getAdminDiagnostics("wrong-token")).rejects.toThrow(
+      "운영자 인증 정보가 올바르지 않습니다",
     );
   });
 });

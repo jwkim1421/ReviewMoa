@@ -19,7 +19,8 @@ import {
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { JobSnapshot, JobStatus, ProductIdentity, Report } from "./domain/types";
 import { ProductUrlError, resolveProductInput } from "./domain/url";
-import { createJob, getJob, refreshJob } from "./lib/api";
+import { createJob, getAdminDiagnostics, getJob, refreshJob } from "./lib/api";
+import type { AdminDiagnosticJob, AdminDiagnostics } from "./lib/api";
 import {
   getMobileHandoffState,
   hasCollectorExtension,
@@ -27,8 +28,9 @@ import {
 } from "./lib/extension";
 
 const sources = ["네이버", "쿠팡", "컬리", "오늘의집", "11번가", "SSG닷컴", "G마켓"];
-type View = "home" | "probing" | "report" | "ideas";
+type View = "home" | "probing" | "report" | "ideas" | "admin";
 const STORED_JOB_KEY = "reviewmoa.activeJobId";
+const ADMIN_TOKEN_KEY = "reviewmoa.adminToken";
 const operatorTokenKey = (jobId: string) => `reviewmoa.operatorToken.${jobId}`;
 
 function isIphoneSafari() {
@@ -54,7 +56,11 @@ function cleanReviewText(value: string) {
 
 export function App() {
   const [url, setUrl] = useState("");
-  const [view, setView] = useState<View>(() => window.location.hash === "#ideas" ? "ideas" : "home");
+  const [view, setView] = useState<View>(() => {
+    if (window.location.hash === "#ideas") return "ideas";
+    if (window.location.hash === "#admin") return "admin";
+    return "home";
+  });
   const [product, setProduct] = useState<ProductIdentity>();
   const [jobId, setJobId] = useState<string>();
   const [job, setJob] = useState<JobSnapshot>();
@@ -64,7 +70,7 @@ export function App() {
   const [handoffError, setHandoffError] = useState("");
 
   useEffect(() => {
-    if (window.location.hash === "#ideas") return;
+    if (["#ideas", "#admin"].includes(window.location.hash)) return;
     const urlJobId = new URL(window.location.href).searchParams.get("job");
     const storedJobId = window.localStorage.getItem(STORED_JOB_KEY);
     const restoredJobId = urlJobId || storedJobId;
@@ -308,6 +314,7 @@ export function App() {
       )}
       {view === "report" && report && <ReportView report={report} onRefresh={refresh} onBack={reset} />}
       {view === "ideas" && <IdeasPage onBack={reset} />}
+      {view === "admin" && <AdminPage onBack={reset} />}
     </main>
   );
 }
@@ -522,6 +529,198 @@ function statusStep(status: JobStatus) {
     "waiting_for_user",
   ].includes(status)) return 1;
   return 2;
+}
+
+function adminStatusLabel(status: string) {
+  return ({
+    completed: "완료",
+    partial: "부분 완료",
+    failed: "실패",
+    cancelled: "취소",
+    collecting: "수집 중",
+    analyzing: "분석 중",
+    queued: "대기열",
+    waiting_for_login: "로그인 대기",
+    waiting_for_user: "사용자 대기",
+    waiting_for_operator: "운영자 대기",
+  } as Record<string, string>)[status] ?? status;
+}
+
+function distributionText(distribution?: Record<string, number>) {
+  if (!distribution) return "-";
+  return [5, 4, 3, 2, 1]
+    .map((rating) => `${rating}점 ${distribution[String(rating)] ?? 0}`)
+    .join(" · ");
+}
+
+function AdminPage({ onBack }: { onBack: () => void }) {
+  const [token, setToken] = useState(() => window.sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? "");
+  const [data, setData] = useState<AdminDiagnostics>();
+  const [loading, setLoading] = useState(false);
+  const [adminError, setAdminError] = useState("");
+
+  async function load(candidate = token, remember = false) {
+    if (!candidate.trim()) {
+      setAdminError("운영자 토큰을 입력해 주세요.");
+      return;
+    }
+    setLoading(true);
+    setAdminError("");
+    try {
+      const diagnostics = await getAdminDiagnostics(candidate.trim());
+      setData(diagnostics);
+      if (remember) window.sessionStorage.setItem(ADMIN_TOKEN_KEY, candidate.trim());
+    } catch (caught) {
+      setAdminError(caught instanceof Error ? caught.message : "진단 정보를 불러오지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (token) void load(token);
+  // 저장된 세션 토큰은 최초 진입 시 한 번만 확인합니다.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function signOut() {
+    window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    setToken("");
+    setData(undefined);
+    setAdminError("");
+  }
+
+  return (
+    <section className="admin-page">
+      <button className="text-button" onClick={onBack}><ArrowLeft size={15} /> 홈으로</button>
+      <div className="admin-heading">
+        <div>
+          <span className="kicker">PRIVATE OPERATIONS</span>
+          <h1>수집 상태 진단</h1>
+          <p>최근 작업의 상태와 정제된 수집 진단만 표시합니다.</p>
+        </div>
+        {data && (
+          <div className="admin-actions">
+            <button onClick={() => void load()} disabled={loading}><RefreshCw size={14} /> 새로고침</button>
+            <button onClick={signOut}>로그아웃</button>
+          </div>
+        )}
+      </div>
+
+      {!data && (
+        <form className="admin-login" onSubmit={(event) => {
+          event.preventDefault();
+          void load(token, true);
+        }}>
+          <label htmlFor="admin-token">운영자 토큰</label>
+          <input
+            id="admin-token"
+            type="password"
+            autoComplete="current-password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="Worker에 등록한 ADMIN_TOKEN"
+          />
+          <button type="submit" disabled={loading}>{loading ? "확인 중…" : "진단 열기"}</button>
+          <small>토큰은 현재 Safari 탭의 세션 저장소에만 보관됩니다.</small>
+        </form>
+      )}
+
+      {adminError && <p className="admin-error"><AlertTriangle size={15} /> {adminError}</p>}
+
+      {data && (
+        <>
+          <div className="admin-summary" aria-label="작업 요약">
+            <AdminSummaryCard label="최근 작업" value={data.summary.total} />
+            <AdminSummaryCard label="성공·부분 완료" value={data.summary.successful} />
+            <AdminSummaryCard label="실패·취소" value={data.summary.failed} />
+            <AdminSummaryCard
+              label="종료 작업 성공률"
+              value={data.summary.successRate === null ? "-" : `${data.summary.successRate}%`}
+            />
+          </div>
+
+          <div className="admin-breakdowns">
+            <AdminBreakdown title="사이트별" values={data.summary.bySource} />
+            <AdminBreakdown title="확장 버전별" values={data.summary.byExtensionVersion} />
+            <div className="admin-breakdown">
+              <h2>오류 유형</h2>
+              {Object.keys(data.summary.byErrorCode).length === 0
+                ? <p>기록된 오류가 없습니다.</p>
+                : Object.entries(data.summary.byErrorCode).map(([key, count]) => (
+                    <div className="admin-breakdown-row" key={key}><span>{key}</span><strong>{count}</strong></div>
+                  ))}
+            </div>
+          </div>
+
+          <div className="admin-jobs-heading">
+            <h2>최근 작업</h2>
+            <span>{formatDate(data.generatedAt)} 갱신</span>
+          </div>
+          <div className="admin-job-list">
+            {data.jobs.map((job) => <AdminJobCard key={job.id} job={job} />)}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function AdminSummaryCard({ label, value }: { label: string; value: string | number }) {
+  return <article><span>{label}</span><strong>{value}</strong></article>;
+}
+
+function AdminBreakdown({ title, values }: { title: string; values: Record<string, { total: number; successful: number; failed: number }> }) {
+  return (
+    <div className="admin-breakdown">
+      <h2>{title}</h2>
+      {Object.keys(values).length === 0
+        ? <p>집계할 정보가 없습니다.</p>
+        : Object.entries(values).map(([key, metric]) => (
+            <div className="admin-breakdown-row" key={key}>
+              <span>{key}</span>
+              <strong>{metric.successful}/{metric.total}</strong>
+              <small>실패 {metric.failed}</small>
+            </div>
+          ))}
+    </div>
+  );
+}
+
+function AdminJobCard({ job }: { job: AdminDiagnosticJob }) {
+  const diagnostics = job.progress?.diagnostics;
+  return (
+    <article className={`admin-job admin-job-${job.statusGroup}`}>
+      <header>
+        <div>
+          <span className="admin-job-source">{job.product.sourceLabel ?? job.product.source}</span>
+          <strong>{job.product.productId}</strong>
+        </div>
+        <span className="admin-status">{adminStatusLabel(job.status)}</span>
+      </header>
+      <dl>
+        <div><dt>갱신</dt><dd>{formatDate(job.updatedAt)}</dd></div>
+        <div><dt>단계</dt><dd>{job.progress?.stage ?? "-"}</dd></div>
+        <div><dt>오류</dt><dd>{job.errorCode ?? job.interruptionReason ?? diagnostics?.failure ?? "-"}</dd></div>
+        <div><dt>수집기</dt><dd>{job.collector ?? job.handoffSource ?? "-"}</dd></div>
+        <div><dt>확장</dt><dd>{job.progress?.extensionVersion ?? "-"}</dd></div>
+        <div><dt>재시도</dt><dd>{job.retryable ? "가능" : "불필요"}</dd></div>
+      </dl>
+      {diagnostics && (
+        <details>
+          <summary>정제된 수집 진단</summary>
+          <div className="admin-diagnostic-grid">
+            <span>어댑터 <strong>{diagnostics.adapter ?? "-"}</strong></span>
+            <span>페이지 <strong>{diagnostics.pageKind ?? "-"}</strong></span>
+            <span>제어 시도 <strong>{diagnostics.attemptCount ?? 0}회</strong></span>
+            <span>검증 <strong>{diagnostics.validation?.ok === false ? diagnostics.validation.reason ?? "실패" : "통과"}</strong></span>
+          </div>
+          <p>원본 분포: {distributionText(diagnostics.sourceDistribution)}</p>
+          <p>수집 분포: {distributionText(diagnostics.ratingDistribution)}</p>
+        </details>
+      )}
+    </article>
+  );
 }
 
 function Probe({

@@ -117,6 +117,9 @@ function showCollectionOverlay(message) {
         :host {
           position: fixed;
           inset: 0;
+          width: 100vw;
+          max-width: 100vw;
+          box-sizing: border-box;
           z-index: 2147483647;
           display: grid;
           place-items: center;
@@ -129,7 +132,8 @@ function showCollectionOverlay(message) {
           cursor: wait;
         }
         .card {
-          width: min(320px, calc(100vw - 48px));
+          width: min(100%, 320px);
+          box-sizing: border-box;
           padding: 30px 24px 27px;
           border-radius: 22px;
           color: #27241f;
@@ -206,17 +210,29 @@ function watchForOperatorCompletion(job, reason) {
 }
 
 function allowedNaverProductPage(value) {
+  return Boolean(describeNaverProductPage(value));
+}
+
+function describeNaverProductPage(value = location.href) {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" &&
-      /\/(?:products|catalog)\/\d+/.test(url.pathname) &&
-      (
-        url.hostname === "smartstore.naver.com" ||
-        url.hostname === "brand.naver.com" ||
-        url.hostname.endsWith(".shopping.naver.com")
-      );
+    if (url.protocol !== "https:") return null;
+    const productId = url.pathname.match(/\/(?:products|catalog)\/(\d+)/)?.[1];
+    if (!productId) return null;
+    const hostname = url.hostname.toLowerCase();
+    const mobile = hostname.startsWith("m.");
+    if (hostname === "brand.naver.com" || hostname.endsWith(".brand.naver.com")) {
+      return { kind: "brand_store", productId, mobile };
+    }
+    if (hostname === "smartstore.naver.com" || hostname.endsWith(".smartstore.naver.com")) {
+      return { kind: "smart_store", productId, mobile };
+    }
+    if (hostname === "shopping.naver.com" || hostname.endsWith(".shopping.naver.com")) {
+      return { kind: "shopping_catalog", productId, mobile };
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -343,8 +359,12 @@ async function collect(job) {
 }
 
 async function collectNaver(job, config, product) {
+  const page = describeNaverProductPage();
   fullReviewDiagnostics = {
-    adapter: "naver-mobile-v1",
+    adapter: "naver-safari-v2",
+    pageKind: page?.kind || "unsupported",
+    productId: page?.productId,
+    mobile: page?.mobile ?? false,
     startPath: location.pathname,
     attempts: [],
   };
@@ -390,9 +410,28 @@ async function collectNaver(job, config, product) {
   }
   fullReviewDiagnostics.sourceDistribution = sourceDistribution;
 
-  const sourceReviewCount = RATINGS.reduce((sum, rating) => sum + sourceDistribution[rating], 0);
+  const displayedReviewTotal = readNaverReviewTotal();
+  const sourceValidation = validateNaverSourceTotals(sourceDistribution, displayedReviewTotal);
+  fullReviewDiagnostics.sourceTotal = sourceValidation;
+  if (!sourceValidation.ok) {
+    fullReviewDiagnostics.failure = sourceValidation.reason;
+    return {
+      jobId: job.id,
+      status: "failed",
+      reason: sourceValidation.reason,
+      message: sourceValidation.message,
+      product,
+      collectorDiagnostics: fullReviewDiagnostics,
+    };
+  }
+
+  const sourceReviewCount = sourceValidation.sourceReviewCount;
   const collectionStrategy = chooseNaverCollectionStrategy(sourceDistribution);
   const fullScanFallback = collectionStrategy === "full_scan";
+  fullReviewDiagnostics.collectionStrategy = collectionStrategy;
+  fullReviewDiagnostics.collectionTargets = naverCollectionTargets(sourceDistribution, {
+    requireFullDistribution: fullScanFallback,
+  });
   let newestSortApplied = false;
 
   if (fullScanFallback) {
@@ -918,17 +957,55 @@ function countReviewsByRating(reviews) {
   ]));
 }
 
-function reachedNaverCollectionTarget(reviews, sourceDistribution, options = {}) {
-  const counts = countReviewsByRating(reviews);
-  return RATINGS.every((rating) => counts[rating] >= (
+function readNaverReviewTotal() {
+  const roots = [findNaverReviewRoot(), ...document.querySelectorAll("[role='dialog']")]
+    .filter((root, index, items) => root && isRenderedInActiveTree(root) && items.indexOf(root) === index);
+  const values = new Set();
+  for (const root of roots) {
+    for (const element of root.querySelectorAll("h1, h2, h3, strong, button, a, [role='heading']")) {
+      if (!isRenderedInActiveTree(element)) continue;
+      const match = normalize(element.textContent || "").match(/^리뷰\s*([\d,]+)$/);
+      if (match) values.add(Number(match[1].replaceAll(",", "")));
+    }
+  }
+  return values.size === 1 ? [...values][0] : null;
+}
+
+function validateNaverSourceTotals(sourceDistribution, displayedReviewTotal) {
+  const sourceReviewCount = RATINGS.reduce(
+    (sum, rating) => sum + sourceDistribution[rating],
+    0,
+  );
+  if (displayedReviewTotal !== null && displayedReviewTotal !== sourceReviewCount) {
+    return {
+      ok: false,
+      reason: "naver_source_total_mismatch",
+      message: `네이버 전체 리뷰는 ${displayedReviewTotal}개인데 별점 분포 합계가 ${sourceReviewCount}개여서 분석을 중단했습니다.`,
+      displayedReviewTotal,
+      sourceReviewCount,
+    };
+  }
+  return { ok: true, displayedReviewTotal, sourceReviewCount };
+}
+
+function naverCollectionTargets(sourceDistribution, options = {}) {
+  return Object.fromEntries(RATINGS.map((rating) => [
+    rating,
     options.requireFullDistribution
       ? sourceDistribution[rating]
-      : Math.min(sourceDistribution[rating], 100)
-  ));
+      : Math.min(sourceDistribution[rating], 100),
+  ]));
+}
+
+function reachedNaverCollectionTarget(reviews, sourceDistribution, options = {}) {
+  const counts = countReviewsByRating(reviews);
+  const targets = naverCollectionTargets(sourceDistribution, options);
+  return RATINGS.every((rating) => counts[rating] >= targets[rating]);
 }
 
 function validateNaverCollection(reviews, sourceDistribution, options = {}) {
   const counts = countReviewsByRating(reviews);
+  const targets = naverCollectionTargets(sourceDistribution, options);
   for (const rating of RATINGS) {
     if (counts[rating] > sourceDistribution[rating]) {
       return {
@@ -937,9 +1014,7 @@ function validateNaverCollection(reviews, sourceDistribution, options = {}) {
         message: `네이버 원본에는 ${rating}점 리뷰가 ${sourceDistribution[rating]}개인데 ${counts[rating]}개가 감지되어 분석을 중단했습니다.`,
       };
     }
-    const target = options.requireFullDistribution
-      ? sourceDistribution[rating]
-      : Math.min(sourceDistribution[rating], 100);
+    const target = targets[rating];
     if (counts[rating] < target) {
       return {
         ok: false,
@@ -1628,6 +1703,7 @@ function wait(milliseconds) {
 
 globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   detectInterruption,
+  describeNaverProductPage,
   applyNaverNewestSort,
   chooseNaverCollectionStrategy,
   collectNaverPages,
@@ -1642,6 +1718,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   openFullNaverReviewList,
   prepareReviewArea,
   readNaverRatingDistribution,
+  readNaverReviewTotal,
   revealNaverRatingDistribution,
   reachedNaverCollectionTarget,
   readVisibleNaverReviews,
@@ -1649,4 +1726,5 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   selectLatestByRating,
   showCollectionOverlay,
   validateNaverCollection,
+  validateNaverSourceTotals,
 });

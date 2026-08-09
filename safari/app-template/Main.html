@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <link rel="stylesheet" href="../Style.css">
+</head>
+<body>
+  <main>
+    <img class="app-icon" src="../Icon.png" width="88" height="88" alt="리뷰모아 아이콘">
+    <p class="eyebrow">SAFARI EXTENSION</p>
+    <h1>리뷰모아를<br>Safari에 연결해 주세요.</h1>
+    <p class="intro">처음 한 번만 아래 순서대로 설정하면 상품 페이지에서 리뷰를 직접 수집할 수 있어요.</p>
+
+    <ol class="steps">
+      <li><span>1</span><div><strong>설정 앱 열기</strong><p>iPhone 설정에서 <b>앱 → Safari → 확장 프로그램</b>으로 이동하세요.</p></div></li>
+      <li><span>2</span><div><strong>리뷰모아 켜기</strong><p>리뷰모아를 활성화하고 웹사이트 접근 권한을 <b>항상 허용</b>으로 선택하세요.</p></div></li>
+      <li><span>3</span><div><strong>리뷰모아에서 시작하기</strong><p>아래 버튼을 눌러 상품 URL을 붙여넣으면 됩니다.</p></div></li>
+    </ol>
+
+    <button id="open-reviewmoa" class="primary" type="button">리뷰모아 열기</button>
+    <button id="open-privacy" class="secondary" type="button">개인정보 처리방침</button>
+    <p class="privacy-note">로그인 정보와 CAPTCHA 답은 수집하거나 서버로 전송하지 않습니다.</p>
+  </main>
+  <script>
+    document.querySelector("#open-reviewmoa")?.addEventListener("click", () => {
+      window.webkit?.messageHandlers?.controller?.postMessage({ action: "openReviewMoa" });
+    });
+    document.querySelector("#open-privacy")?.addEventListener("click", () => {
+      window.webkit?.messageHandlers?.controller?.postMessage({ action: "openPrivacy" });
+    });
+  </script>
+</body>
+</html>

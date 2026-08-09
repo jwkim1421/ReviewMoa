@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://brand.naver.com/test/products/1"}
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type CollectorHooks = {
+  describeNaverProductPage(url?: string): {
+    kind: "brand_store" | "smart_store" | "shopping_catalog";
+    productId: string;
+    mobile: boolean;
+  } | null;
   applyNaverNewestSort(): Promise<boolean>;
   chooseNaverCollectionStrategy(distribution: Record<number, number>): "full_scan" | "newest_sort";
   collectNaverPages(
@@ -19,11 +26,13 @@ type CollectorHooks = {
     reason: string;
     message: string;
   } | null;
+  cleanReviewContent(value: string): string;
   findFullNaverReviewControl(): Element | null;
   hasOnlyNaverSummaryReviews(config?: unknown): boolean;
   openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
   prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
   readNaverRatingDistribution(): Record<number, number> | null;
+  readNaverReviewTotal(): number | null;
   revealNaverRatingDistribution(): Promise<boolean>;
   reachedNaverCollectionTarget(
     reviews: Array<{ rating: number }>,
@@ -44,6 +53,10 @@ type CollectorHooks = {
     distribution: Record<number, number>,
     options?: { requireFullDistribution?: boolean },
   ): { ok: boolean; reason?: string };
+  validateNaverSourceTotals(
+    distribution: Record<number, number>,
+    displayedTotal: number | null,
+  ): { ok: boolean; reason?: string; sourceReviewCount: number };
   extractRating(node: Element): number | null;
   extractDate(node: Element): string | undefined;
   readVisibleReviews(
@@ -69,6 +82,10 @@ type CollectorHooks = {
 };
 
 let collector: CollectorHooks;
+const fullReviewFixture = readFileSync(
+  resolve("test/fixtures/naver-mobile-full-review-dialog.html"),
+  "utf8",
+);
 
 beforeAll(async () => {
   await import("./content.js");
@@ -82,6 +99,48 @@ beforeEach(() => {
 });
 
 describe("review collector", () => {
+  it("passes the shared Naver full-review fixture quality gate", async () => {
+    document.documentElement.innerHTML = fullReviewFixture;
+
+    await expect(collector.applyNaverNewestSort()).resolves.toBe(true);
+    const distribution = collector.readNaverRatingDistribution();
+    const reviews = collector.readVisibleNaverReviews({
+      duplicateBodies: new Set(),
+      seenKeys: new Set(),
+    });
+    const selected = collector.selectLatestByRating(reviews);
+
+    expect(collector.readNaverReviewTotal()).toBe(8);
+    expect(distribution).toEqual({ 1: 1, 2: 1, 3: 1, 4: 2, 5: 3 });
+    expect(reviews).toHaveLength(8);
+    expect(Object.fromEntries([5, 4, 3, 2, 1].map((rating) => [
+      rating,
+      selected.filter((review) => review.rating === rating).length,
+    ]))).toEqual({ 1: 1, 2: 1, 3: 1, 4: 2, 5: 3 });
+    expect(collector.validateNaverSourceTotals(distribution!, 8)).toMatchObject({ ok: true });
+    expect(collector.validateNaverCollection(reviews, distribution!, {
+      requireFullDistribution: true,
+    })).toEqual({ ok: true });
+    expect(selected.filter((review) => review.rating === 5).map((review) => review.createdAt))
+      .toEqual(["2026-08-09", "2026-08-07", "2026-08-01"]);
+    expect(reviews.every((review) => !/더보기|이미지\s*펼치기/u.test(review.content)))
+      .toBe(true);
+  });
+
+  it("classifies supported Naver product URL variants without tracking parameters", () => {
+    expect(collector.describeNaverProductPage(
+      "https://m.brand.naver.com/doodoostory/products/11256690153?NaPm=test#REVIEW",
+    )).toEqual({ kind: "brand_store", productId: "11256690153", mobile: true });
+    expect(collector.describeNaverProductPage(
+      "https://smartstore.naver.com/hiwell/products/5038692181",
+    )).toEqual({ kind: "smart_store", productId: "5038692181", mobile: false });
+    expect(collector.describeNaverProductPage(
+      "https://search.shopping.naver.com/catalog/40669491206?query=test",
+    )).toEqual({ kind: "shopping_catalog", productId: "40669491206", mobile: false });
+    expect(collector.describeNaverProductPage("https://search.naver.com/search.naver?query=test"))
+      .toBeNull();
+  });
+
   it("extracts explicit ratings and does not default an unknown rating to five", () => {
     document.body.innerHTML = `
       <article id="known" data-rating="2"><p>배송은 왔지만 제품이 파손되어 아쉬워요.</p></article>
@@ -580,6 +639,41 @@ describe("review collector", () => {
     });
   });
 
+  it("cross-checks the full review heading against the source rating distribution", () => {
+    document.body.innerHTML = `
+      <section role="dialog">
+        <h2>리뷰 443</h2>
+        <div>5점 (최고예요) 398건</div>
+        <div>4점 (좋아요) 33건</div>
+        <div>3점 (괜찮아요) 9건</div>
+        <div>2점 (그저 그래요) 2건</div>
+        <div>1점 (별로예요) 1건</div>
+        <p data-shp-area="sprvarevlist_l.review">전체 리뷰 제목과 분포를 대조하기 위한 충분히 긴 리뷰입니다.</p>
+      </section>
+    `;
+
+    expect(collector.readNaverReviewTotal()).toBe(443);
+    expect(collector.validateNaverSourceTotals(
+      { 5: 398, 4: 33, 3: 9, 2: 2, 1: 1 },
+      collector.readNaverReviewTotal(),
+    )).toEqual({
+      ok: true,
+      displayedReviewTotal: 443,
+      sourceReviewCount: 443,
+    });
+  });
+
+  it("fails closed when the Naver review heading and rating distribution disagree", () => {
+    expect(collector.validateNaverSourceTotals(
+      { 5: 100, 4: 4, 3: 2, 2: 0, 1: 0 },
+      107,
+    )).toMatchObject({
+      ok: false,
+      reason: "naver_source_total_mismatch",
+      sourceReviewCount: 106,
+    });
+  });
+
   it("waits for a separately rendered rating distribution dialog", async () => {
     document.body.innerHTML = `
       <section role="dialog">
@@ -782,6 +876,9 @@ describe("review collector", () => {
     expect(overlay.shadowRoot?.textContent).toContain(
       "수집이 끝나면 리뷰모아로 자동으로 돌아갑니다.",
     );
+    const overlayStyles = overlay.shadowRoot?.querySelector("style")?.textContent || "";
+    expect(overlayStyles).toContain("box-sizing: border-box");
+    expect(overlayStyles).toContain("width: min(100%, 320px)");
 
     collector.hideCollectionOverlay();
     expect(document.querySelector("#reviewmoa-collection-overlay")).toBeNull();

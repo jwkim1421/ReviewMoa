@@ -305,6 +305,56 @@ h1 em { color: var(--orange); font-style: normal; }
 .anomaly-stats strong { display: block; margin-bottom: 5px; color: var(--ink); font-family: "Gowun Batang", serif; font-size: 26px; }
 .limitation { display: flex; align-items: center; gap: 6px; margin: 16px 0 0; color: #956148; font-size: 12px; }
 
+.admin-page { max-width: 1100px; margin: 48px auto 90px; padding: 0 24px; }
+.admin-heading { margin: 22px 0 28px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.admin-heading h1 { margin: 8px 0; font-size: clamp(34px, 5vw, 56px); }
+.admin-heading p { margin: 0; color: #746e65; }
+.admin-actions { display: flex; gap: 8px; }
+.admin-actions button, .admin-login button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 10px; padding: 11px 14px; color: white; background: var(--ink); font-weight: 700; }
+.admin-actions button:last-child { color: var(--ink); background: #e7e1d6; }
+.admin-actions button:disabled, .admin-login button:disabled { opacity: .55; }
+.admin-login { max-width: 520px; padding: 24px; display: grid; gap: 10px; border: 1px solid #d9d2c6; border-radius: 16px; background: rgba(255,255,255,.65); }
+.admin-login label { font-weight: 800; }
+.admin-login input { width: 100%; padding: 13px 14px; border: 1px solid #d2cabd; border-radius: 10px; background: white; }
+.admin-login small { color: #817a70; }
+.admin-error { max-width: 620px; display: flex; align-items: center; gap: 7px; color: #ae472e; }
+.admin-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.admin-summary article { padding: 18px; border: 1px solid #d9d2c6; border-radius: 14px; background: rgba(255,255,255,.7); }
+.admin-summary span, .admin-summary strong { display: block; }
+.admin-summary span { color: #817a70; font-size: 12px; }
+.admin-summary strong { margin-top: 8px; font-family: "Gowun Batang", serif; font-size: 30px; }
+.admin-breakdowns { margin-top: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.admin-breakdown { min-width: 0; padding: 18px; border: 1px solid #d9d2c6; border-radius: 14px; background: rgba(255,255,255,.55); }
+.admin-breakdown h2 { margin: 0 0 12px; font-size: 15px; }
+.admin-breakdown > p { margin: 0; color: #8a8378; font-size: 12px; }
+.admin-breakdown-row { padding: 8px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border-top: 1px solid #e3ddd2; font-size: 12px; }
+.admin-breakdown-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-breakdown-row small { color: #a05b46; }
+.admin-jobs-heading { margin: 34px 0 12px; display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.admin-jobs-heading h2 { margin: 0; font-size: 20px; }
+.admin-jobs-heading span { color: #8a8378; font-size: 11px; }
+.admin-job-list { display: grid; gap: 10px; }
+.admin-job { padding: 17px 18px; border: 1px solid #d9d2c6; border-left-width: 5px; border-radius: 13px; background: rgba(255,255,255,.72); }
+.admin-job-successful { border-left-color: var(--green); }
+.admin-job-failed { border-left-color: #d45b3d; }
+.admin-job-waiting { border-left-color: #d2a43b; }
+.admin-job-active { border-left-color: #6e8fa0; }
+.admin-job > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.admin-job > header > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.admin-job-source { color: var(--green); font-size: 11px; font-weight: 800; }
+.admin-job > header strong { overflow-wrap: anywhere; }
+.admin-status { flex: none; padding: 5px 8px; border-radius: 999px; color: #5f584f; background: #ebe5da; font-size: 10px; font-weight: 800; }
+.admin-job dl { margin: 14px 0 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.admin-job dl div { min-width: 0; }
+.admin-job dt { color: #8a8378; font-size: 10px; }
+.admin-job dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 11px; }
+.admin-job details { margin-top: 12px; border-top: 1px solid #e1dbd0; padding-top: 10px; color: #686158; font-size: 11px; }
+.admin-job summary { color: var(--green); cursor: pointer; font-weight: 800; }
+.admin-diagnostic-grid { margin-top: 10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.admin-diagnostic-grid span { padding: 8px; background: #f2eee6; border-radius: 7px; }
+.admin-diagnostic-grid strong { display: block; margin-top: 3px; color: var(--ink); }
+.admin-job details p { margin: 8px 0 0; }
+
 @media (max-width: 720px) {
   .nav { padding-left: 16px; padding-right: 16px; gap: 8px; }
   .brand { gap: 7px; font-size: 18px; }
@@ -347,6 +397,14 @@ h1 em { color: var(--orange); font-style: normal; }
   .cache-banner-copy { width: 100%; white-space: nowrap; font-size: 11px; }
   .cache-banner button { margin-left: 24px; }
   .idea-nav { padding: 7px 8px; font-size: 11px; }
+  .admin-page { margin-top: 18px; padding: 0 16px; }
+  .admin-heading { display: block; }
+  .admin-heading h1 { font-size: 38px; }
+  .admin-actions { margin-top: 16px; }
+  .admin-summary { grid-template-columns: 1fr 1fr; }
+  .admin-breakdowns { grid-template-columns: 1fr; }
+  .admin-job dl { grid-template-columns: 1fr 1fr; }
+  .admin-diagnostic-grid { grid-template-columns: 1fr 1fr; }
   .ideas-intro { display: block; }
   .issues-link { margin-top: 24px; }
   .ideas-layout { grid-template-columns: 1fr; }

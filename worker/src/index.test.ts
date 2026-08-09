@@ -69,6 +69,118 @@ function collectorEnv(db: D1Database, overrides?: Partial<AppEnv>) {
   } as AppEnv;
 }
 
+describe("admin diagnostics API", () => {
+  it("rejects missing or invalid admin credentials before touching D1", async () => {
+    const missing = await worker.fetch(
+      new Request("https://api.example/v1/admin/diagnostics"),
+      { ALLOWED_ORIGIN: "https://reviewmoa.kro.kr" } as AppEnv,
+    );
+    const wrong = await worker.fetch(
+      new Request("https://api.example/v1/admin/diagnostics", {
+        headers: { Authorization: "Bearer wrong-token" },
+      }),
+      {
+        ALLOWED_ORIGIN: "https://reviewmoa.kro.kr",
+        ADMIN_TOKEN: "admin-secret",
+      } as AppEnv,
+    );
+
+    expect(missing.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    await expect(missing.json()).resolves.toEqual({ error: "UNAUTHORIZED" });
+    await expect(wrong.json()).resolves.toEqual({ error: "UNAUTHORIZED" });
+  });
+
+  it("returns aggregated, redacted diagnostics to an authorized operator", async () => {
+    const { db, statements } = createDb({
+      rows(sql) {
+        return sql.includes("FROM jobs")
+          ? [{
+              id: "job-1",
+              product_json: JSON.stringify({
+                source: "naver",
+                sourceLabel: "네이버",
+                productId: "123",
+                originalUrl: "https://example.test/private-url",
+                canonicalUrl: "https://example.test/private-url",
+                name: "원문에 저장된 상품명",
+              }),
+              status: "failed",
+              error_code: "collection_failed",
+              progress_json: JSON.stringify({
+                stage: "collecting",
+                message: "전체 리뷰 목록을 확인하지 못했습니다.",
+                source: "ios-safari",
+                extensionVersion: "0.1.25",
+                reviews: [{ content: "노출되면 안 되는 리뷰 원문" }],
+                operatorToken: "must-not-leak",
+                collectorDiagnostics: {
+                  adapter: "naver",
+                  pageKind: "brand-product",
+                  mobile: true,
+                  attempts: [{ selector: "button.secret", text: "원문" }],
+                  sourceDistribution: { 5: 100, 4: 4, 3: 2, 2: 0, 1: 0 },
+                  ratingDistribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+                  validation: { ok: false, reason: "rating_5_incomplete", secret: "hidden" },
+                  cookies: "must-not-leak",
+                },
+              }),
+              interruption_reason: null,
+              claimed_by: "mobile-safari",
+              handoff_source: "ios-safari",
+              attempt_count: 2,
+              requested_at: "2026-08-09T00:00:00.000Z",
+              started_at: "2026-08-09T00:00:01.000Z",
+              finished_at: "2026-08-09T00:00:02.000Z",
+              created_at: "2026-08-09T00:00:00.000Z",
+              updated_at: "2026-08-09T00:00:02.000Z",
+            }]
+          : [];
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/admin/diagnostics?limit=999", {
+        headers: { Authorization: "Bearer admin-secret" },
+      }),
+      collectorEnv(db, { ADMIN_TOKEN: "admin-secret" }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      limit: 100,
+      summary: {
+        total: 1,
+        failed: 1,
+        successRate: 0,
+        bySource: { naver: { total: 1, successful: 0, failed: 1 } },
+        byExtensionVersion: { "0.1.25": { total: 1, successful: 0, failed: 1 } },
+        byErrorCode: { collection_failed: 1 },
+      },
+      jobs: [{
+        id: "job-1",
+        product: { source: "naver", sourceLabel: "네이버", productId: "123" },
+        status: "failed",
+        retryable: true,
+        progress: {
+          extensionVersion: "0.1.25",
+          diagnostics: {
+            adapter: "naver",
+            attemptCount: 1,
+            validation: { ok: false, reason: "rating_5_incomplete" },
+          },
+        },
+      }],
+    });
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("private-url");
+    expect(serialized).not.toContain("리뷰 원문");
+    expect(serialized).not.toContain("must-not-leak");
+    expect(serialized).not.toContain("button.secret");
+    expect(statements.find((statement) => statement.sql.includes("FROM jobs"))?.bindings).toEqual([100]);
+  });
+});
+
 describe("Worker CORS", () => {
   it("returns a bodyless 204 preflight response for the production site", async () => {
     const request = new Request("https://reviewmoa-api.reviewmoa.workers.dev/v1/jobs/probe", {
@@ -599,7 +711,12 @@ describe("collector queue API", () => {
             status: "collecting",
             capability_json: null,
             error_code: null,
-            progress_json: JSON.stringify({ stage: "collecting", accepted: 20 }),
+            progress_json: JSON.stringify({
+              stage: "collecting",
+              accepted: 20,
+              collectorDiagnostics: { cookies: "must-not-leak" },
+              operatorToken: "must-not-leak",
+            }),
             interruption_reason: null,
             requested_at: "2026-07-28T00:00:00.000Z",
             started_at: "2026-07-28T00:00:01.000Z",
@@ -629,6 +746,8 @@ describe("collector queue API", () => {
     expect(payload).not.toHaveProperty("claimedBy");
     expect(payload).not.toHaveProperty("lease_expires_at");
     expect(payload).not.toHaveProperty("leaseExpiresAt");
+    expect(JSON.stringify(payload)).not.toContain("collectorDiagnostics");
+    expect(JSON.stringify(payload)).not.toContain("must-not-leak");
   });
 
   it("accepts valid review batches only from the collector that owns the lease", async () => {

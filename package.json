@@ -12,8 +12,12 @@
     "collector:canary": "npm run collector:build && node collector/dist/canary.js",
     "collector:start": "npm run collector:build && node --env-file-if-exists=.env.collector collector/dist/index.js",
     "safari:prepare": "node scripts/prepare-safari-extension.mjs",
-    "safari:package": "npm run safari:prepare && xcrun safari-web-extension-packager safari/package --project-location safari/generated --app-name ReviewMoa --bundle-identifier kr.reviewmoa.ReviewMoa --swift --ios-only --copy-resources --no-open --no-prompt --force",
-    "check": "npm test && npm run build && npm run worker:check && npm run collector:build"
+    "safari:package": "npm run safari:prepare && xcrun safari-web-extension-packager safari/package --project-location safari/generated --app-name ReviewMoa --bundle-identifier kr.reviewmoa.ReviewMoa --swift --ios-only --copy-resources --no-open --no-prompt --force && npm run safari:prepare",
+    "safari:release:prepare": "node scripts/bump-safari-build.mjs && npm run safari:prepare",
+    "safari:archive": "xcodebuild -project safari/generated/ReviewMoa/ReviewMoa.xcodeproj -scheme ReviewMoa -configuration Release -destination generic/platform=iOS -derivedDataPath safari/build/DerivedData -archivePath safari/build/ReviewMoa.xcarchive archive -allowProvisioningUpdates",
+    "safari:export": "xcodebuild -exportArchive -archivePath safari/build/ReviewMoa.xcarchive -exportPath safari/build/export -exportOptionsPlist safari/ExportOptions.plist -allowProvisioningUpdates",
+    "release:gate": "npm test && npm run worker:check && npm run collector:build",
+    "check": "npm run release:gate && npm run build"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.7.0",

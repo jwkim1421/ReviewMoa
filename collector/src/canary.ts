@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { launchCollectorBrowser } from "./browser.js";
+import { evaluateCanaryOutcome, type CanaryPolicy } from "./canary-policy.js";
 import { collectClaimedJob } from "./collect.js";
 import type { CollectorConfig } from "./config.js";
 import type { CollectorJob } from "./types.js";
@@ -40,12 +41,45 @@ function canaryConfig(): CollectorConfig {
   };
 }
 
+function canaryPolicy(): CanaryPolicy {
+  const minReviews = Number(process.env.REVIEWMOA_CANARY_MIN_REVIEWS ?? 10);
+  const minDatedRatio = Number(process.env.REVIEWMOA_CANARY_MIN_DATED_RATIO ?? 0.5);
+  const requiredRatings = (process.env.REVIEWMOA_CANARY_REQUIRED_RATINGS ?? "5,4,3,2,1")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value): value is 1 | 2 | 3 | 4 | 5 =>
+      Number.isInteger(value) && value >= 1 && value <= 5
+    );
+  if (!Number.isInteger(minReviews) || minReviews < 1 || minReviews > 500) {
+    throw new Error("REVIEWMOA_CANARY_MIN_REVIEWS는 1~500 정수여야 합니다.");
+  }
+  if (!Number.isFinite(minDatedRatio) || minDatedRatio < 0 || minDatedRatio > 1) {
+    throw new Error("REVIEWMOA_CANARY_MIN_DATED_RATIO는 0~1 사이여야 합니다.");
+  }
+  return {
+    minReviews,
+    minDatedRatio,
+    requiredRatings,
+    requireFullList: process.env.REVIEWMOA_CANARY_ALLOW_SUMMARY !== "true",
+  };
+}
+
+function safePagePath(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "unknown";
+  }
+}
+
 const input = process.argv[2];
 if (!input) {
   throw new Error("사용법: npm run collector:canary -- <네이버 상품 URL>");
 }
 
 const config = canaryConfig();
+const policy = canaryPolicy();
 const product = canaryProduct(input);
 const now = new Date().toISOString();
 const job: CollectorJob = {
@@ -89,16 +123,15 @@ try {
               : undefined,
             ariaLabel: element.getAttribute("aria-label") ?? undefined,
             dataShpArea: element.getAttribute("data-shp-area") ?? undefined,
-            href: element.getAttribute("href") ?? undefined,
             ariaControls: element.getAttribute("aria-controls") ?? undefined,
-            text: element.getAttribute("data-shp-contents-type") === "review"
+            text: element.getAttribute("data-shp-contents-type") === "review" ||
+                element.closest("[data-shp-contents-type='review']")
               ? "[review content omitted]"
               : element.textContent?.replace(/\s+/g, " ").trim().slice(0, 120),
           }))
       );
       diagnostics = {
-        finalUrl: page.url(),
-        title: await page.title(),
+        finalPath: safePagePath(page.url()),
         layout: await page.evaluate(() => {
           const fullReview = document.querySelector(
             "[data-shp-area='sprvsub.rvmore']",
@@ -128,20 +161,16 @@ try {
       };
     },
   });
+  const evaluation = evaluateCanaryOutcome(outcome, policy);
   if (outcome.kind !== "completed") {
     console.log(JSON.stringify({
       url: product.canonicalUrl,
       outcome: outcome.kind,
       reason: "reason" in outcome ? outcome.reason : outcome.code,
+      qualityGate: evaluation,
       diagnostics,
     }, null, 2));
   } else {
-    const ratingCounts = Object.fromEntries(
-      [5, 4, 3, 2, 1].map((rating) => [
-        rating,
-        outcome.reviews.filter((review) => review.rating === rating).length,
-      ]),
-    );
     const classificationCounts = Object.fromEntries(
       ["included", "sponsored", "duplicate", "rating_mismatch", "uncertain"].map(
         (classification) => [
@@ -154,18 +183,19 @@ try {
       url: product.canonicalUrl,
       outcome: outcome.kind,
       partialReason: outcome.partialReason,
-      reviewCount: outcome.reviews.length,
-      ratingCounts,
+      qualityGate: evaluation,
+      reviewCount: evaluation.reviewCount,
+      ratingCounts: evaluation.ratingCounts,
       classificationCounts,
       samples: outcome.reviews.slice(0, 3).map((review) => ({
         id: review.id,
         rating: review.rating,
         createdAt: review.createdAt,
-        option: review.option,
-        content: review.content.slice(0, 160),
+        contentLength: review.content.length,
       })),
     }, null, 2));
   }
+  process.exitCode = evaluation.exitCode;
 } finally {
   await context.close();
 }

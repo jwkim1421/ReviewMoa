@@ -1,0 +1,18 @@
+* { box-sizing: border-box; }
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; color: #27241f; background: #f7f4ed; }
+html, body { min-height: 100%; margin: 0; }
+body { padding: max(28px, env(safe-area-inset-top)) 22px max(28px, env(safe-area-inset-bottom)); background: radial-gradient(circle at 85% 0, rgba(255,107,53,.18), transparent 40%), #f7f4ed; }
+main { width: min(100%, 520px); margin: 0 auto; }
+.app-icon { display: block; border-radius: 20px; box-shadow: 0 12px 28px rgba(39,36,31,.14); }
+.eyebrow { margin: 24px 0 8px; color: #315c4c; font-size: 12px; font-weight: 800; letter-spacing: .16em; }
+h1 { margin: 0; font-family: ui-serif, "AppleMyungjo", serif; font-size: clamp(34px, 10vw, 48px); line-height: 1.15; letter-spacing: -.05em; }
+.intro { margin: 18px 0 26px; color: #6f685e; font-size: 15px; line-height: 1.65; }
+.steps { margin: 0 0 24px; padding: 0; display: grid; gap: 10px; list-style: none; }
+.steps li { padding: 15px; display: grid; grid-template-columns: 34px 1fr; gap: 12px; border: 1px solid #ddd5c8; border-radius: 14px; background: rgba(255,255,255,.68); }
+.steps li > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; color: white; background: #315c4c; font-weight: 800; }
+.steps strong { display: block; margin-top: 2px; font-size: 15px; }
+.steps p { margin: 5px 0 0; color: #736c62; font-size: 13px; line-height: 1.55; }
+button { width: 100%; min-height: 52px; border-radius: 13px; font: inherit; font-weight: 800; }
+.primary { border: 0; color: white; background: #27241f; }
+.secondary { margin-top: 9px; border: 1px solid #cfc6b7; color: #315c4c; background: transparent; }
+.privacy-note { margin: 16px 8px 0; color: #8b8378; text-align: center; font-size: 11px; line-height: 1.5; }

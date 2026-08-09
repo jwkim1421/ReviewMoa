@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import type { Page } from "playwright-core";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  cleanNaverReviewContent,
   collectNaverReviews,
   extractNaverReviewNodes,
   NAVER_REVIEW_ITEM_SELECTOR,
@@ -13,6 +14,10 @@ import {
 
 const fixture = readFileSync(
   resolve("collector/tests/fixtures/naver-product.html"),
+  "utf8",
+);
+const fullReviewFixture = readFileSync(
+  resolve("test/fixtures/naver-mobile-full-review-dialog.html"),
   "utf8",
 );
 
@@ -79,6 +84,40 @@ function fixturePage() {
 }
 
 describe("Naver review adapter", () => {
+  it("passes the shared full-review fixture quality gate", async () => {
+    document.documentElement.innerHTML = fullReviewFixture;
+    const rows = extractNaverReviewNodes(
+      Array.from(document.querySelectorAll(NAVER_REVIEW_ITEM_SELECTOR)),
+    );
+    const reviews = selectNaverReviews(
+      rows,
+      "https://m.brand.naver.com/fixture/products/123",
+    );
+
+    expect(rows).toHaveLength(8);
+    expect(Object.fromEntries([5, 4, 3, 2, 1].map((rating) => [
+      rating,
+      reviews.filter((review) => review.rating === rating).length,
+    ]))).toEqual({ 1: 1, 2: 1, 3: 1, 4: 2, 5: 3 });
+    expect(reviews.filter((review) => review.rating === 5).map((review) => review.createdAt))
+      .toEqual(["2026-08-09", "2026-08-07", "2026-08-01"]);
+    expect(reviews.every((review) => !/더보기|이미지\s*펼치기/u.test(review.content)))
+      .toBe(true);
+    await expect(collectNaverReviews(fixturePage())).resolves.toMatchObject({
+      kind: "completed",
+      reviews: expect.arrayContaining([
+        expect.objectContaining({ id: "fixture-1", rating: 1 }),
+        expect.objectContaining({ id: "fixture-5-new", rating: 5 }),
+      ]),
+    });
+  });
+
+  it("removes Naver UI suffixes without changing the review body", () => {
+    expect(cleanNaverReviewContent(
+      "내용은 그대로 유지합니다. 더보기 이미지 펼치기 이미지 펼치기",
+    )).toBe("내용은 그대로 유지합니다.");
+  });
+
   it("extracts only reviews with a verified rating and body", () => {
     const rows = extractNaverReviewNodes(
       Array.from(document.querySelectorAll(NAVER_REVIEW_ITEM_SELECTOR)),

@@ -24,7 +24,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Run release quality gate
+        run: npm run release:gate
       - run: npm run build
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}

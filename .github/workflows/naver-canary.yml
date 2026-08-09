@@ -1,0 +1,42 @@
+name: Naver Collector Canary
+
+on:
+  schedule:
+    # 주 1회 목요일 오전 3시 17분(KST). 정각 집중 실행을 피한다.
+    - cron: "17 18 * * 3"
+  workflow_dispatch:
+    inputs:
+      product_url:
+        description: "검증할 공개 네이버 상품 URL"
+        required: false
+        default: "https://m.brand.naver.com/doodoostory/products/9083360112"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naver-live-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify Chrome runtime
+        run: google-chrome --version
+      - name: Run one safe Naver canary
+        run: npm run collector:canary -- "$CANARY_URL"
+        env:
+          CANARY_URL: ${{ inputs.product_url || 'https://m.brand.naver.com/doodoostory/products/9083360112' }}
+          REVIEWMOA_HEADLESS: "true"
+          REVIEWMOA_PROFILE_DIR: ${{ runner.temp }}/reviewmoa-canary-profile
+          REVIEWMOA_CANARY_MIN_REVIEWS: "10"
+          REVIEWMOA_CANARY_REQUIRED_RATINGS: "5,4,3,2,1"
+          REVIEWMOA_CANARY_MIN_DATED_RATIO: "0.5"
