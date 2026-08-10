@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { JobSnapshot, JobStatus, ProductIdentity, Report } from "./domain/types";
@@ -369,11 +370,21 @@ function Home({
             placeholder="상품 URL을 붙여넣어 주세요"
             aria-label="상품 URL"
           />
+          {url && (
+            <button
+              type="button"
+              className="search-clear"
+              onClick={() => setUrl("")}
+              aria-label="입력 지우기"
+            >
+              <X size={16} />
+            </button>
+          )}
           <button type="submit">리뷰 확인 <ArrowRight size={18} /></button>
         </form>
         {error ? <p className="form-error"><AlertTriangle size={14} /> {error}</p> : (
           <p className="search-note">
-            <ShieldCheck size={14} /> 집의 중앙 수집 서버가 작업을 처리하며, 사용자 기기에 확장 프로그램을 설치하지 않습니다.
+            <ShieldCheck size={14} /> 중앙 수집 서버가 작업을 처리하며, 사용자의 개인정보는 수집하지 않습니다.
           </p>
         )}
       </section>

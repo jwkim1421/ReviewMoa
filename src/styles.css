@@ -127,6 +127,19 @@ h1 em { color: var(--orange); font-style: normal; }
   font-weight: 700;
 }
 .search-box button svg { color: white; }
+.search-box .search-clear {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #8b8378;
+  background: #f1ede3;
+}
+.search-box .search-clear:hover { color: #5d574f; background: #e7e2d6; }
+.search-box .search-clear svg { color: inherit; }
 .search-box.has-error { border-color: #d35138; }
 .search-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; color: #888176; font-size: 12px; }
 .search-note a { margin-left: 4px; color: var(--green); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
@@ -198,8 +211,8 @@ h1 em { color: var(--orange); font-style: normal; }
 
 .probe-page {
   max-width: 760px;
-  margin: 70px auto;
-  padding: 40px 24px 80px;
+  margin: 0 auto 70px;
+  padding: 6px 24px 80px;
 }
 .probe-back { margin-bottom: 36px; }
 .probe-page > h1 { margin: 16px 0; font-size: clamp(40px, 6vw, 62px); }
