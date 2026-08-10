@@ -26,11 +26,19 @@ const files = [
   "popup.html",
   "popup.js",
 ];
+const iconSizes = [48, 96, 128, 256, 512];
 
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
 await Promise.all(files.map((file) =>
   copyFile(resolve(source, file), resolve(target, file))
+));
+await mkdir(resolve(target, "icons"), { recursive: true });
+await Promise.all(iconSizes.map((size) =>
+  copyFile(
+    resolve(source, "icons", `icon-${size}.png`),
+    resolve(target, "icons", `icon-${size}.png`),
+  )
 ));
 
 const manifestPath = resolve(target, "manifest.json");
@@ -74,8 +82,15 @@ if (generatedProjectSource) {
   await mkdir(generatedResources, { recursive: true });
   await mkdir(resolve(generatedApp, "Resources", "Base.lproj"), { recursive: true });
   await mkdir(generatedAppIconSet, { recursive: true });
+  await mkdir(resolve(generatedResources, "icons"), { recursive: true });
   await Promise.all(files.map((file) =>
     copyFile(resolve(target, file), resolve(generatedResources, file))
+  ));
+  await Promise.all(iconSizes.map((size) =>
+    copyFile(
+      resolve(target, "icons", `icon-${size}.png`),
+      resolve(generatedResources, "icons", `icon-${size}.png`),
+    )
   ));
   await Promise.all([
     copyFile(

@@ -3,6 +3,13 @@
   "name": "리뷰모아 수집 도우미",
   "version": "0.1.25",
   "description": "사용자가 연 상품 페이지에서 공개된 최신 리뷰를 별점별로 확인합니다.",
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png",
+    "256": "icons/icon-256.png",
+    "512": "icons/icon-512.png"
+  },
   "permissions": ["storage", "tabs"],
   "host_permissions": [
     "https://*.naver.com/*",
@@ -20,7 +27,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "리뷰모아"
+    "default_title": "리뷰모아",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
   },
   "content_scripts": [
     {
