@@ -28,6 +28,7 @@ function createDb(options?: {
         async first() {
           const custom = options?.first?.(sql, recorded.bindings);
           if (custom !== undefined) return custom;
+          if (sql.includes("INTO rate_events")) return { count: 1 };
           return sql.includes("SET status = 'collecting'")
             ? options?.claimJob ?? null
             : null;
@@ -1192,5 +1193,227 @@ describe("collector queue API", () => {
     expect(statements.some((statement) =>
       statement.sql.includes("SELECT * FROM jobs WHERE id = ?")
     )).toBe(false);
+  });
+});
+
+describe("public API abuse protection (P0-6a)", () => {
+  it("rejects an unsupported shopping source before creating a job", async () => {
+    const { db, statements } = createDb();
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product: { source: "generic", productId: "123" } }),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "UNSUPPORTED_SOURCE" });
+    expect(statements.some((statement) => statement.sql.includes("INTO jobs"))).toBe(false);
+  });
+
+  it("returns 429 when the job creation rate limit is exceeded", async () => {
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("INTO rate_events")) return null;
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product: { source: "naver", productId: "123" } }),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({ error: "RATE_LIMITED" });
+    expect(statements.some((statement) => statement.sql.includes("INTO jobs"))).toBe(false);
+  });
+});
+
+describe("review text retention (P0-6b)", () => {
+  it("stores reports without raw review text and keeps only references", async () => {
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SET status = 'analyzing'")) {
+          return {
+            id: "job-1",
+            cache_key: "naver:123:all",
+            product_json: JSON.stringify({ source: "naver", productId: "123" }),
+            status: "analyzing",
+            progress_json: null,
+          };
+        }
+      },
+      rows(sql) {
+        if (sql.includes("FROM reviews")) {
+          return [{
+            review_id: "r1",
+            rating: 5,
+            content: "비밀로 지켜야 하는 리뷰 원문",
+            created_at: "2026-08-01T00:00:00.000Z",
+            option_name: null,
+            classification: "included",
+          }];
+        }
+        return [];
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/collector/jobs/job-1/complete", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer collector-secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ collectorId: "home-mac-01" }),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(200);
+    const insert = statements.find((statement) =>
+      statement.sql.includes("INSERT OR REPLACE INTO reports")
+    );
+    const storedReportJson = insert?.bindings[2] as string;
+    expect(storedReportJson).toContain("\"r1\"");
+    expect(storedReportJson).not.toContain("비밀로 지켜야 하는 리뷰 원문");
+  });
+
+  it("hydrates representative review text from the reviews table on read", async () => {
+    const leanReport = {
+      id: "job-1",
+      collectionVerified: true,
+      rawExpiresAt: "2099-01-01T00:00:00.000Z",
+      ratings: [{
+        rating: 5,
+        reviews: [{ id: "r1", rating: 5, classification: "included" }],
+      }],
+      limitations: [],
+    };
+    const { db } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) {
+          return {
+            id: "job-1",
+            cache_key: "naver:123:all",
+            product_json: JSON.stringify({ source: "naver", productId: "123" }),
+            status: "completed",
+            capability_json: null,
+            error_code: null,
+            progress_json: null,
+            interruption_reason: null,
+            requested_at: null,
+            started_at: null,
+            finished_at: null,
+            operator_token_hash: null,
+            operator_token_expires_at: null,
+            created_at: "2026-08-01T00:00:00.000Z",
+            updated_at: "2026-08-01T00:00:00.000Z",
+          };
+        }
+        if (sql.includes("FROM reports WHERE job_id")) {
+          return {
+            report_json: JSON.stringify(leanReport),
+            raw_expires_at: "2099-01-01T00:00:00.000Z",
+          };
+        }
+      },
+      rows(sql) {
+        if (sql.includes("FROM reviews") && sql.includes("IN (")) {
+          return [{
+            review_id: "r1",
+            content: "복원된 리뷰 원문",
+            created_at: "2026-08-01T00:00:00.000Z",
+            option_name: null,
+          }];
+        }
+        return [];
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-1"),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as Record<string, any>;
+    expect(payload.report.ratings[0].reviews[0]).toMatchObject({
+      id: "r1",
+      content: "복원된 리뷰 원문",
+    });
+  });
+
+  it("omits expired representative text and notes the expiry without reading reviews", async () => {
+    const leanReport = {
+      id: "job-1",
+      collectionVerified: true,
+      rawExpiresAt: "2000-01-01T00:00:00.000Z",
+      ratings: [{
+        rating: 5,
+        reviews: [{ id: "r1", rating: 5, classification: "included" }],
+      }],
+      limitations: [],
+    };
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) {
+          return {
+            id: "job-1",
+            cache_key: "naver:123:all",
+            product_json: JSON.stringify({ source: "naver", productId: "123" }),
+            status: "completed",
+            capability_json: null,
+            error_code: null,
+            progress_json: null,
+            interruption_reason: null,
+            requested_at: null,
+            started_at: null,
+            finished_at: null,
+            operator_token_hash: null,
+            operator_token_expires_at: null,
+            created_at: "2026-07-01T00:00:00.000Z",
+            updated_at: "2026-07-01T00:00:00.000Z",
+          };
+        }
+        if (sql.includes("FROM reports WHERE job_id")) {
+          return {
+            report_json: JSON.stringify(leanReport),
+            raw_expires_at: "2000-01-01T00:00:00.000Z",
+          };
+        }
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-1"),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as Record<string, any>;
+    expect(payload.report.ratings[0].reviews).toEqual([]);
+    expect((payload.report.limitations as string[]).join(" ")).toContain("원문 보존 기간");
+    expect(statements.some((statement) =>
+      statement.sql.includes("FROM reviews") && statement.sql.includes("IN (")
+    )).toBe(false);
+  });
+
+  it("purges expired data on the scheduled cron run", async () => {
+    const { db, statements } = createDb();
+    await worker.scheduled!(
+      {} as never,
+      collectorEnv(db),
+    );
+    const sqls = statements.map((statement) => statement.sql);
+    expect(sqls.some((sql) => sql.includes("DELETE FROM reviews WHERE raw_expires_at"))).toBe(true);
+    expect(sqls.some((sql) => sql.includes("DELETE FROM reports WHERE report_expires_at"))).toBe(true);
+    expect(sqls.some((sql) => sql.includes("DELETE FROM rate_events"))).toBe(true);
+    expect(sqls.some((sql) => sql.includes("operator_token_hash = NULL"))).toBe(true);
+    expect(sqls.some((sql) =>
+      sql.includes("DELETE FROM jobs") && sql.includes("'completed', 'partial', 'failed', 'cancelled'")
+    )).toBe(true);
   });
 });

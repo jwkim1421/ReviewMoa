@@ -16,6 +16,7 @@ const MIGRATIONS = [
   new URL("../worker/migrations/0002_ai_daily_usage.sql", import.meta.url).pathname,
   new URL("../worker/migrations/0003_collector_queue.sql", import.meta.url).pathname,
   new URL("../worker/migrations/0004_mobile_handoff.sql", import.meta.url).pathname,
+  new URL("../worker/migrations/0005_rate_events.sql", import.meta.url).pathname,
 ];
 
 afterEach(() => {

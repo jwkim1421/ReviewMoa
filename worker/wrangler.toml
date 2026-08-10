@@ -2,6 +2,9 @@ name = "reviewmoa-api"
 main = "src/index.ts"
 compatibility_date = "2026-07-27"
 
+[triggers]
+crons = ["17 */6 * * *"]
+
 [vars]
 ALLOWED_ORIGIN = "https://reviewmoa.kro.kr"
 AI_MODEL = "gpt-5-mini"

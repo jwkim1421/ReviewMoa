@@ -35,6 +35,20 @@ const FAILURE_CODES = new Set([
   "collection_failed",
   "adapter_not_implemented",
 ]);
+// 서버가 받아들이는 쇼핑몰 소스 화이트리스트. 목록에 없는 소스는 거부해 임의
+// 호스트로 향하는 작업 생성(SSRF 성격)과 미지원 사이트의 무한 대기를 막는다.
+const ALLOWED_SOURCES = new Set([
+  "naver",
+  "coupang",
+  "kurly",
+  "ohouse",
+  "11st",
+  "ssg",
+  "gmarket",
+]);
+// 공개 작업 생성 요청 제한. IP는 시간당, 전체는 일일 상한으로 남용과 비용을 막는다.
+const RATE_LIMIT_PER_IP_HOURLY = 30;
+const RATE_LIMIT_GLOBAL_DAILY = 300;
 
 interface CollectorReviewInput {
   id: string;
@@ -334,6 +348,55 @@ function validCollectorId(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9._-]{1,64}$/.test(value);
 }
 
+function validSource(value: unknown): value is string {
+  return typeof value === "string" && ALLOWED_SOURCES.has(value);
+}
+
+function validProductId(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 200 &&
+    !/\s/.test(value);
+}
+
+function clientIpBucket(request: Request) {
+  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  return hashOperatorToken(ip).then((hash) => `ip:${hash.slice(0, 32)}`);
+}
+
+// rate_events에 원자적으로 1을 더하되 한도 미만일 때만 성공한다. reserveAiRequest와
+// 같은 SQLite UPSERT + 조건부 UPDATE + RETURNING 패턴을 사용한다.
+async function reserveRateSlot(
+  env: AppEnv,
+  bucket: string,
+  windowStart: string,
+  limit: number,
+) {
+  const now = new Date().toISOString();
+  const reservation = await env.DB.prepare(
+    `INSERT INTO rate_events(bucket, window_start, count, updated_at)
+     VALUES(?, ?, 1, ?)
+     ON CONFLICT(bucket, window_start) DO UPDATE SET
+       count = count + 1,
+       updated_at = excluded.updated_at
+     WHERE count < ?
+     RETURNING count`,
+  ).bind(bucket, windowStart, now, limit).first<{ count: number }>();
+  return Boolean(reservation);
+}
+
+// 공개 작업 생성에 IP 시간당 + 전체 일일 제한을 적용한다. 둘 중 하나라도 초과하면
+// false를 돌려주고 호출부에서 429로 응답한다.
+async function withinJobRateLimit(request: Request, env: AppEnv) {
+  const now = new Date().toISOString();
+  const hourWindow = now.slice(0, 13);
+  const dayWindow = now.slice(0, 10);
+  const ipBucket = await clientIpBucket(request);
+  const globalOk = await reserveRateSlot(env, "jobs:global", dayWindow, RATE_LIMIT_GLOBAL_DAILY);
+  if (!globalOk) return false;
+  return reserveRateSlot(env, `jobs:${ipBucket}`, hourWindow, RATE_LIMIT_PER_IP_HOURLY);
+}
+
 function validOptionalText(value: unknown, maxLength: number) {
   return value === undefined ||
     (typeof value === "string" && value.length <= maxLength);
@@ -404,7 +467,38 @@ function serializeCollectorJob(row: CollectorJobRow) {
   };
 }
 
-function reportForResponse(
+// 저장용 보고서에서 대표 리뷰 원문을 제거한다. 원문은 reviews 테이블(7일 만료)에만
+// 남기고 report_json에는 review_id 참조와 별점·분류만 저장해, 30일 보관되는 보고서
+// JSON에 원문이 남지 않도록 한다(보존 정책 버그 수정).
+function stripRawFromReport<T extends { ratings?: unknown }>(report: T): T {
+  if (!Array.isArray(report.ratings)) return report;
+  return {
+    ...report,
+    ratings: report.ratings.map((rating) => {
+      const record = rating as Record<string, unknown>;
+      return {
+        ...record,
+        reviews: Array.isArray(record.reviews)
+          ? record.reviews.map((review) => {
+              const item = review as Record<string, unknown>;
+              return {
+                id: item.id,
+                rating: item.rating,
+                classification: item.classification,
+              };
+            })
+          : record.reviews,
+      };
+    }),
+  };
+}
+
+// 저장된 보고서를 응답용으로 복원한다. 원문 보존 기간이 남아 있으면 reviews
+// 테이블에서 대표 리뷰 원문을 채우고, 만료됐으면 원문을 비운 채 안내를 덧붙인다.
+// probe, 캐시 응답, GET 작업 조회가 모두 이 함수를 거쳐 만료 원문이 노출되지 않게 한다.
+async function hydrateStoredReport(
+  env: AppEnv,
+  jobId: string,
   reportJson: string,
   rawExpiresAt?: string | null,
   cached = false,
@@ -414,20 +508,80 @@ function reportForResponse(
   const rawExpiry = rawExpiresAt ??
     (typeof report.rawExpiresAt === "string" ? report.rawExpiresAt : null);
   const rawExpired = Boolean(rawExpiry && rawExpiry < new Date().toISOString());
-  if (!rawExpired || !Array.isArray(report.ratings)) {
+  if (!Array.isArray(report.ratings)) {
     return { ...report, cached };
   }
+  if (rawExpired) {
+    return {
+      ...report,
+      cached,
+      ratings: report.ratings.map((rating) => ({
+        ...(rating as Record<string, unknown>),
+        reviews: [],
+      })),
+      limitations: [
+        ...((report.limitations as string[] | undefined) ?? []),
+        "원문 보존 기간 7일이 지나 대표 리뷰 원문이 만료되었습니다. 다시 불러오면 최신 원문을 확인할 수 있습니다.",
+      ],
+    };
+  }
+
+  const ids = report.ratings.flatMap((rating) => {
+    const reviews = (rating as Record<string, unknown>).reviews;
+    return Array.isArray(reviews)
+      ? reviews
+          .map((review) => (review as Record<string, unknown>).id)
+          .filter((id): id is string => typeof id === "string")
+      : [];
+  });
+  const contentById = new Map<string, {
+    content: string;
+    created_at: string | null;
+    option_name: string | null;
+  }>();
+  if (ids.length) {
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = (await env.DB.prepare(
+      `SELECT review_id, content, created_at, option_name
+       FROM reviews
+       WHERE job_id = ? AND review_id IN (${placeholders})`,
+    ).bind(jobId, ...ids).all<{
+      review_id: string;
+      content: string;
+      created_at: string | null;
+      option_name: string | null;
+    }>()).results ?? [];
+    for (const row of rows) {
+      contentById.set(row.review_id, {
+        content: row.content,
+        created_at: row.created_at,
+        option_name: row.option_name,
+      });
+    }
+  }
+
   return {
     ...report,
     cached,
-    ratings: report.ratings.map((rating) => ({
-      ...(rating as Record<string, unknown>),
-      reviews: [],
-    })),
-    limitations: [
-      ...((report.limitations as string[] | undefined) ?? []),
-      "원문 보존 기간 7일이 지나 대표 리뷰 원문이 만료되었습니다. 다시 불러오면 최신 원문을 확인할 수 있습니다.",
-    ],
+    ratings: report.ratings.map((rating) => {
+      const record = rating as Record<string, unknown>;
+      const reviews = Array.isArray(record.reviews)
+        ? record.reviews
+            .map((review) => {
+              const item = review as Record<string, unknown>;
+              const found = typeof item.id === "string" ? contentById.get(item.id) : undefined;
+              if (!found) return undefined;
+              return {
+                ...item,
+                content: found.content,
+                createdAt: found.created_at ?? undefined,
+                option: found.option_name ?? undefined,
+              };
+            })
+            .filter((review) => review !== undefined)
+        : record.reviews;
+      return { ...record, reviews };
+    }),
   };
 }
 
@@ -460,6 +614,64 @@ async function cleanup(env: AppEnv) {
       now,
       staleMobileAnalysis,
     ),
+  ]);
+}
+
+// Cron Trigger로 실행하는 종합 만료 정리. 요청이 없어도 오래된 원문·보고서·작업·토큰을
+// 지워, 원문 7일·보고서 30일 보존 정책을 요청 트래픽과 무관하게 강제한다.
+async function scheduledCleanup(env: AppEnv) {
+  const now = new Date().toISOString();
+  const day = now.slice(0, 10);
+  const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+  const staleMobileAnalysis = new Date(Date.now() - 2 * 60_000).toISOString();
+  await env.DB.batch([
+    // 7일 지난 원문, 30일 지난 보고서 실제 삭제
+    env.DB.prepare("DELETE FROM reviews WHERE raw_expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM reports WHERE report_expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM ai_daily_usage WHERE day < ?").bind(day),
+    env.DB.prepare("DELETE FROM rate_events WHERE window_start < ?").bind(twoDaysAgo),
+    // 만료된 모바일 인계 토큰 무효화
+    env.DB.prepare(
+      `UPDATE jobs
+       SET operator_token_hash = NULL,
+           operator_token_expires_at = NULL,
+           updated_at = ?
+       WHERE operator_token_expires_at IS NOT NULL
+         AND operator_token_expires_at < ?`,
+    ).bind(now, now),
+    // 종료된 지 30일 넘은 작업 삭제(관련 원문·보고서는 이미 만료 삭제됨)
+    env.DB.prepare(
+      `DELETE FROM jobs
+       WHERE status IN ('completed', 'partial', 'failed', 'cancelled')
+         AND COALESCE(finished_at, updated_at) < ?`,
+    ).bind(thirtyDaysAgo),
+    // 3일 넘게 수집기가 가져가지 않은 대기 작업 정리
+    env.DB.prepare(
+      `DELETE FROM jobs
+       WHERE status IN ('queued', 'probing')
+         AND COALESCE(requested_at, created_at) < ?`,
+    ).bind(threeDaysAgo),
+    // 리뷰·보고서가 사라진 고아 작업(비종료 상태 제외) 정리
+    env.DB.prepare(
+      `DELETE FROM jobs
+       WHERE status IN ('completed', 'partial')
+         AND NOT EXISTS (SELECT 1 FROM reports WHERE reports.job_id = jobs.id)
+         AND COALESCE(finished_at, updated_at) < ?`,
+    ).bind(threeDaysAgo),
+    // 멈춘 모바일 수집 작업을 운영자 대기로 되돌림
+    env.DB.prepare(
+      `UPDATE jobs
+       SET status = 'waiting_for_operator',
+           claimed_by = NULL,
+           interruption_reason = 'operator_required',
+           updated_at = ?
+       WHERE status IN ('collecting', 'analyzing')
+         AND claimed_by = 'mobile-safari'
+         AND updated_at < ?
+         AND NOT EXISTS (SELECT 1 FROM reports WHERE reports.job_id = jobs.id)`,
+    ).bind(now, staleMobileAnalysis),
   ]);
 }
 
@@ -865,7 +1077,7 @@ async function handle(request: Request, env: AppEnv) {
         ).bind(
           job.cache_key,
           jobId,
-          JSON.stringify(report),
+          JSON.stringify(stripRawFromReport(report)),
           report.collectedAt,
           report.rawExpiresAt,
           report.reportExpiresAt,
@@ -904,15 +1116,16 @@ async function handle(request: Request, env: AppEnv) {
     const body = await readBody<{ product: { source: string; productId: string; experimental?: boolean } }>(request);
     const key = `${body.product.source}:${body.product.productId}:all`.toLowerCase();
     const cached = await env.DB.prepare(
-      `SELECT report_json, raw_expires_at
+      `SELECT job_id, report_json, raw_expires_at
        FROM reports
        WHERE cache_key = ? AND report_expires_at > ?`,
     ).bind(key, new Date().toISOString()).first<{
+      job_id: string;
       report_json: string;
       raw_expires_at: string;
     }>();
     const cachedReport = cached
-      ? reportForResponse(cached.report_json, cached.raw_expires_at, true)
+      ? await hydrateStoredReport(env, cached.job_id, cached.report_json, cached.raw_expires_at, true)
       : undefined;
     return json({
       capability: {
@@ -941,6 +1154,9 @@ async function handle(request: Request, env: AppEnv) {
     ) {
       return json({ error: "INVALID_PRODUCT" }, 400, origin);
     }
+    if (!validSource(body.product.source) || !validProductId(body.product.productId)) {
+      return json({ error: "UNSUPPORTED_SOURCE" }, 400, origin);
+    }
     if (body.collector !== undefined && body.collector !== "ios-safari") {
       return json({ error: "INVALID_COLLECTOR" }, 400, origin);
     }
@@ -961,7 +1177,13 @@ async function handle(request: Request, env: AppEnv) {
       raw_expires_at: string;
     }>();
     if (cached) {
-      const report = reportForResponse(cached.report_json, cached.raw_expires_at, true);
+      const report = await hydrateStoredReport(
+        env,
+        cached.job_id,
+        cached.report_json,
+        cached.raw_expires_at,
+        true,
+      );
       if (report) {
         return json({
           id: cached.job_id,
@@ -1039,6 +1261,10 @@ async function handle(request: Request, env: AppEnv) {
       }, 200, origin);
     }
 
+    if (!await withinJobRateLimit(request, env)) {
+      return json({ error: "RATE_LIMITED" }, 429, origin);
+    }
+
     const status = mobileRequested ? "collecting" : "queued";
     const progress = mobileRequested
       ? JSON.stringify({
@@ -1103,6 +1329,9 @@ async function handle(request: Request, env: AppEnv) {
     const storedReport = await env.DB.prepare(
       "SELECT report_json, raw_expires_at FROM reports WHERE job_id = ?",
     ).bind(jobId).first<{ report_json: string; raw_expires_at: string }>();
+    const report = storedReport
+      ? await hydrateStoredReport(env, jobId, storedReport.report_json, storedReport.raw_expires_at)
+      : undefined;
     return json({
       id: job.id,
       status: job.status,
@@ -1115,9 +1344,7 @@ async function handle(request: Request, env: AppEnv) {
       startedAt: job.started_at,
       finishedAt: job.finished_at,
       updatedAt: job.updated_at,
-      report: storedReport
-        ? reportForResponse(storedReport.report_json, storedReport.raw_expires_at)
-        : undefined,
+      report,
     }, 200, origin);
   }
 
@@ -1475,7 +1702,7 @@ async function handle(request: Request, env: AppEnv) {
         ).bind(
           claimed.cache_key,
           jobId,
-          JSON.stringify(report),
+          JSON.stringify(stripRawFromReport(report)),
           report.collectedAt,
           report.rawExpiresAt,
           report.reportExpiresAt,
@@ -1588,5 +1815,8 @@ export default {
       const publicMessage = isTransientD1Error(error) ? "TEMPORARY_DATABASE_ERROR" : message;
       return json({ error: publicMessage }, message === "INVALID_JSON" ? 400 : 500, allowedOrigin(request, env));
     }
+  },
+  async scheduled(_controller: ScheduledController, env: AppEnv): Promise<void> {
+    await scheduledCleanup(env);
   },
 } satisfies ExportedHandler<AppEnv>;
