@@ -442,11 +442,8 @@ async function collectNaver(job, config, product) {
 
   const sourceReviewCount = sourceValidation.sourceReviewCount;
   const collectionStrategy = chooseNaverCollectionStrategy(sourceDistribution);
-  const fullScanFallback = collectionStrategy === "full_scan";
+  let fullScanFallback = collectionStrategy === "full_scan";
   fullReviewDiagnostics.collectionStrategy = collectionStrategy;
-  fullReviewDiagnostics.collectionTargets = naverCollectionTargets(sourceDistribution, {
-    requireFullDistribution: fullScanFallback,
-  });
   let newestSortApplied = false;
 
   if (fullScanFallback) {
@@ -460,18 +457,29 @@ async function collectNaver(job, config, product) {
       message: "전체 리뷰를 최신순으로 정렬하고 있어요.",
     });
     newestSortApplied = await applyNaverNewestSort();
+    if (!newestSortApplied) {
+      // 최신순 정렬 메뉴를 검증하지 못해도, 리뷰 수가 전체 스캔 한도 이내이면 전체를
+      // 훑어 작성일로 정렬하는 방식으로 폴백한다(정렬 메뉴 없이도 최신 리뷰 확보).
+      // 한도를 넘어 전체 스캔도 불가능할 때만 잘못된 분석을 막기 위해 중단한다.
+      if (sourceReviewCount <= MAX_SCANNED_WITHOUT_FILTER) {
+        fullScanFallback = true;
+        fullReviewDiagnostics.sortFallbackReason = "newest_sort_not_verified";
+      } else {
+        fullReviewDiagnostics.failure = "newest_sort_not_verified";
+        return {
+          jobId: job.id,
+          status: "failed",
+          reason: "naver_newest_sort_not_verified",
+          message: "네이버 리뷰가 최신순으로 정렬된 것을 확인하지 못해 분석을 중단했습니다.",
+          product,
+          collectorDiagnostics: fullReviewDiagnostics,
+        };
+      }
+    }
   }
-  if (!newestSortApplied && !fullScanFallback) {
-    fullReviewDiagnostics.failure = "newest_sort_not_verified";
-    return {
-      jobId: job.id,
-      status: "failed",
-      reason: "naver_newest_sort_not_verified",
-      message: "네이버 리뷰가 최신순으로 정렬된 것을 확인하지 못해 분석을 중단했습니다.",
-      product,
-      collectorDiagnostics: fullReviewDiagnostics,
-    };
-  }
+  fullReviewDiagnostics.collectionTargets = naverCollectionTargets(sourceDistribution, {
+    requireFullDistribution: fullScanFallback,
+  });
   if (fullScanFallback) {
     fullReviewDiagnostics.sortFallback = {
       mode: "direct_full_scan_then_local_date_sort",
