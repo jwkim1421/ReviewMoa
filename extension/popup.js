@@ -10,10 +10,15 @@ chrome.runtime.sendMessage({ type: "REVIEWMOA_GET_STATE" }).then((state) => {
   }
 });
 
-document.querySelector("#resume").addEventListener("click", async () => {
+document.querySelector("#collect").addEventListener("click", async () => {
+  // 현재 보고 있는 상품 페이지 URL로 리뷰모아를 새 탭에서 열고, 그 URL을 자동으로
+  // 채워 수집을 시작하게 한다. 실제 수집·복귀·보고서 표시는 기존 모바일 인계 흐름이
+  // 이어서 처리한다.
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const state = await chrome.runtime.sendMessage({ type: "REVIEWMOA_GET_STATE" });
-  if (!tab?.id || !state?.activeJob) return;
-  await chrome.tabs.sendMessage(tab.id, { type: "REVIEWMOA_PROBE_AND_COLLECT", job: state.activeJob });
+  if (!tab?.url) return;
+  await chrome.tabs.create({
+    url: `https://reviewmoa.kro.kr/?collect=${encodeURIComponent(tab.url)}`,
+    active: true,
+  });
   window.close();
 });

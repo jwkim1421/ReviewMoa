@@ -72,12 +72,27 @@ export function App() {
 
   useEffect(() => {
     if (["#ideas", "#admin"].includes(window.location.hash)) return;
+    // 확장 팝업의 "현재 페이지 리뷰 수집"이 넘긴 URL은 아래 전용 effect가 처리한다.
+    if (new URL(window.location.href).searchParams.get("collect")) return;
     const urlJobId = new URL(window.location.href).searchParams.get("job");
     const storedJobId = window.localStorage.getItem(STORED_JOB_KEY);
     const restoredJobId = urlJobId || storedJobId;
     if (!restoredJobId) return;
     setJobId(restoredJobId);
     setView("probing");
+  }, []);
+
+  useEffect(() => {
+    if (["#ideas", "#admin"].includes(window.location.hash)) return;
+    const target = new URL(window.location.href).searchParams.get("collect");
+    if (!target) return;
+    // 새로고침 시 재수집되지 않도록 파라미터를 제거한 뒤 자동으로 수집을 시작한다.
+    const cleaned = new URL(window.location.href);
+    cleaned.searchParams.delete("collect");
+    window.history.replaceState(null, "", cleaned);
+    setUrl(target);
+    void startCollection(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -165,10 +180,14 @@ export function App() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    await startCollection(url);
+  }
+
+  async function startCollection(inputUrl: string) {
     setError("");
     setHandoffError("");
     try {
-      const resolved = resolveProductInput(url);
+      const resolved = resolveProductInput(inputUrl);
       setProduct(resolved);
       setView("probing");
       setJob(undefined);

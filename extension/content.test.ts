@@ -132,8 +132,15 @@ describe("review collector", () => {
     const setInnerText = (value: string) =>
       Object.defineProperty(document.body, "innerText", { value, configurable: true });
     try {
-      setInnerText("구매평\n등록된 리뷰가 없습니다.");
-      expect(collector.isConfirmedEmptyReviewArea()).toBe(true);
+      for (const empty of [
+        "구매평\n등록된 리뷰가 없습니다.",
+        "아직 작성된 리뷰가 없습니다.",
+        "아직 등록된 구매평이 없어요",
+        "리뷰 0건",
+      ]) {
+        setInnerText(empty);
+        expect(collector.isConfirmedEmptyReviewArea()).toBe(true);
+      }
 
       setInnerText("리뷰 8\n좋아요 잘 쓰고 있습니다.");
       expect(collector.isConfirmedEmptyReviewArea()).toBe(false);

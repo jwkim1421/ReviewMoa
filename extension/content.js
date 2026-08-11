@@ -387,7 +387,7 @@ async function collectNaver(job, config, product) {
   if (!(await openFullNaverReviewList(config))) {
     // 전체 목록을 열지 못한 이유가 "리뷰가 실제로 0개"라서일 수 있다. 이 경우
     // 실패가 아니라 리뷰 없음으로 정상 처리한다.
-    if (readNaverReviewTotal() === 0 || isConfirmedEmptyReviewArea()) {
+    if (await confirmNaverZeroReviews()) {
       fullReviewDiagnostics.confirmedEmpty = true;
       return {
         jobId: job.id,
@@ -1674,9 +1674,22 @@ function extractOption(node) {
 }
 
 function isConfirmedEmptyReviewArea() {
-  return /(등록된|작성된|해당하는)?\s*(리뷰|후기|상품평).{0,12}(없습니다|없어요|0개)/.test(
-    document.body?.innerText || "",
+  const root = findNaverReviewRoot();
+  const text = normalize(
+    `${document.body?.innerText || ""} ${document.body?.textContent || ""} ${root && root !== document.body ? root.textContent || "" : ""}`,
   );
+  return /(등록된|작성된|해당하는|아직)?\s*(리뷰|후기|상품평|구매평).{0,14}(없습니다|없어요|없어|0개|0건)/.test(text);
+}
+
+// 전체 리뷰 목록을 열지 못한 이유가 "리뷰 0개"라서인지 확인한다. 0건 안내는 지연
+// 렌더되거나 화면 밖에 있을 수 있어, 리뷰 영역으로 스크롤하고 잠깐 기다린 뒤 검사한다.
+async function confirmNaverZeroReviews() {
+  const root = findNaverReviewRoot();
+  if (root && root !== document.body && typeof root.scrollIntoView === "function") {
+    root.scrollIntoView({ block: "center" });
+    await wait(900);
+  }
+  return readNaverReviewTotal() === 0 || isConfirmedEmptyReviewArea();
 }
 
 async function notifyProgress(job, progress) {
@@ -1728,6 +1741,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   extractDate,
   findFullNaverReviewControl,
   findRatingControl,
+  confirmNaverZeroReviews,
   hasOnlyNaverSummaryReviews,
   hideCollectionOverlay,
   isConfirmedEmptyReviewArea,
