@@ -380,6 +380,23 @@ async function collectNaver(job, config, product) {
     };
   }
 
+  // 리뷰가 실제로 0개인 상품은 전체 목록·본문이 없어 뒤 단계에서 실패로 오인된다.
+  // 리뷰 탭 숫자 등으로 0건이 확인되면 전체 목록 열기를 시도하기 전에 리뷰 없음으로
+  // 정상 종료한다.
+  if (await confirmNaverZeroReviews()) {
+    fullReviewDiagnostics.confirmedEmpty = true;
+    return {
+      jobId: job.id,
+      status: "completed",
+      reason: "confirmed_zero_reviews",
+      message: "정상적으로 확인한 결과 등록된 리뷰가 없습니다.",
+      product,
+      reviews: [],
+      collectorDiagnostics: fullReviewDiagnostics,
+      collectedAt: new Date().toISOString(),
+    };
+  }
+
   await notifyProgress(job, {
     status: "collecting",
     message: "네이버 전체 리뷰 목록을 열고 있어요.",
@@ -1689,15 +1706,47 @@ function isConfirmedEmptyReviewArea() {
   return /(등록된|작성된|해당하는|아직)?\s*(리뷰|후기|상품평|구매평).{0,14}(없습니다|없어요|없어|0개|0건)/.test(text);
 }
 
-// 전체 리뷰 목록을 열지 못한 이유가 "리뷰 0개"라서인지 확인한다. 0건 안내는 지연
-// 렌더되거나 화면 밖에 있을 수 있어, 리뷰 영역으로 스크롤하고 잠깐 기다린 뒤 검사한다.
+// 상품 상단 탭/링크의 리뷰 수를 읽는다. "리뷰"만 있고 숫자가 없으면 0건, "리뷰 5"면
+// 5를 반환한다. 리뷰가 하나도 없는 상품은 리뷰 본문·전체목록·지연 렌더 안내가 없어
+// 다른 신호로는 감지가 어렵지만, 이 탭은 항상 존재하고 지연 렌더와 무관하므로 0건
+// 판단의 가장 신뢰할 수 있는 1차 신호로 쓴다.
+function readNaverReviewTabCount() {
+  let sawTab = false;
+  let maxCount = 0;
+  const pattern = /^(?:리뷰|후기|상품평|구매평)\s*\(?([\d,]+)?\)?$/;
+  for (const el of document.querySelectorAll("a, button, [role='tab'], [role='button']")) {
+    if (!isRenderedInActiveTree(el)) continue;
+    for (const raw of [el.textContent, el.getAttribute("aria-label")]) {
+      const match = normalize(raw || "").match(pattern);
+      if (!match) continue;
+      sawTab = true;
+      if (match[1]) maxCount = Math.max(maxCount, Number(match[1].replaceAll(",", "")));
+      break;
+    }
+  }
+  return sawTab ? maxCount : null;
+}
+
+// 전체 리뷰 목록을 열지 못한 이유가 "리뷰 0개"라서인지 확인한다.
+// 1차: 리뷰 탭 숫자(없으면 0건, 있으면 0건 아님). 2차: 탭 숫자를 못 읽었을 때만
+// 리뷰 탭을 눌러 지연 렌더를 유도하고 "리뷰 없음" 안내·리뷰 수를 재확인한다.
 async function confirmNaverZeroReviews() {
+  const tabCount = readNaverReviewTabCount();
+  if (tabCount === 0) return true;
+  if (tabCount > 0) return false;
+
+  if (!isConfirmedEmptyReviewArea()) {
+    activateControl(findControlByText(/^(리뷰|후기|상품평|구매평)(\s*\(?[\d,]+\)?)?$/));
+    await wait(1000);
+  }
   const root = findNaverReviewRoot();
   if (root && root !== document.body && typeof root.scrollIntoView === "function") {
     root.scrollIntoView({ block: "center" });
-    await wait(900);
+    await wait(600);
   }
-  return readNaverReviewTotal() === 0 || isConfirmedEmptyReviewArea();
+  return readNaverReviewTabCount() === 0 ||
+    readNaverReviewTotal() === 0 ||
+    isConfirmedEmptyReviewArea();
 }
 
 async function notifyProgress(job, progress) {
@@ -1754,6 +1803,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   hideCollectionOverlay,
   isConfirmedEmptyReviewArea,
   openFullNaverReviewList,
+  readNaverReviewTabCount,
   prepareReviewArea,
   readNaverRatingDistribution,
   readNaverReviewTotal,

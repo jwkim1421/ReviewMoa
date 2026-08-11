@@ -33,6 +33,7 @@ type CollectorHooks = {
   openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
   prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
   readNaverRatingDistribution(): Record<number, number> | null;
+  readNaverReviewTabCount(): number | null;
   readNaverReviewTotal(): number | null;
   revealNaverRatingDistribution(): Promise<boolean>;
   reachedNaverCollectionTarget(
@@ -147,6 +148,27 @@ describe("review collector", () => {
     } finally {
       delete (document.body as unknown as { innerText?: unknown }).innerText;
     }
+  });
+
+  it("reads the Naver review tab count and treats a countless tab as zero reviews", () => {
+    document.body.innerHTML = `
+      <nav>
+        <a role="tab">상세정보</a>
+        <a role="tab">리뷰</a>
+        <a role="tab">Q&A 1</a>
+      </nav>`;
+    expect(collector.readNaverReviewTabCount()).toBe(0);
+
+    document.body.innerHTML = `
+      <nav>
+        <a role="tab">상세정보</a>
+        <a role="tab">리뷰 12</a>
+        <a role="tab">Q&A 3</a>
+      </nav>`;
+    expect(collector.readNaverReviewTabCount()).toBe(12);
+
+    document.body.innerHTML = `<nav><a role="tab">상세정보</a></nav>`;
+    expect(collector.readNaverReviewTabCount()).toBeNull();
   });
 
   it("classifies supported Naver product URL variants without tracking parameters", () => {
