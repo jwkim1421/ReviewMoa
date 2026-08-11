@@ -95,6 +95,12 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 화면(홈→수집→보고서)이 바뀔 때마다 최상단으로 스크롤해, 이전 스크롤 위치가
+  // 남아 수집 화면이 중간부터 보이는 문제를 막는다.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [view]);
+
   useEffect(() => {
     if (view !== "probing" || !jobId) return;
     const activeJobId = jobId;
@@ -403,12 +409,13 @@ function Home({
         </form>
         {error ? <p className="form-error"><AlertTriangle size={14} /> {error}</p> : (
           <p className="search-note">
-            <ShieldCheck size={14} /> 중앙 수집 서버가 작업을 처리하며, 사용자의 개인정보는 수집하지 않습니다.
+            <ShieldCheck size={14} />
+            <span>중앙 수집 서버가 작업을 처리하며<br />사용자의 개인정보는 수집하지 않습니다.</span>
           </p>
         )}
       </section>
-      <section className="sources" aria-label="지원 쇼핑몰">
-        <p>우선 지원 쇼핑몰</p>
+      <section className="sources" aria-label="지원 사이트">
+        <p>지원 사이트</p>
         <div>{sources.map((source) => <span key={source}><Check size={13} /> {source}</span>)}</div>
       </section>
       <section className="features">
@@ -421,7 +428,12 @@ function Home({
 }
 
 function Feature({ number, title, children }: { number: string; title: string; children: React.ReactNode }) {
-  return <article><span className="number">{number}</span><h2>{title}</h2><p>{children}</p></article>;
+  return (
+    <article>
+      <div className="feature-head"><span className="number">{number}</span><h2>{title}</h2></div>
+      <p>{children}</p>
+    </article>
+  );
 }
 
 function IdeasPage({ onBack }: { onBack: () => void }) {
