@@ -864,6 +864,13 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
   const confidenceLabel = report.confidence >= 80 ? "높음" : report.confidence >= 60 ? "보통" : "낮음";
   const totalIncluded = useMemo(() => report.ratings.reduce((sum, item) => sum + item.included, 0), [report]);
   const anomalyTotal = Object.values(report.anomalyCounts).reduce((sum, count) => sum + count, 0);
+  const totalCollected = useMemo(
+    () => report.ratings.reduce((sum, item) => sum + item.checked, 0),
+    [report],
+  );
+  // 리뷰가 하나도 수집되지 않은(실제 0건) 상품은 분석·신뢰도·장단점·제외신호가 모두
+  // 빈 값이라 오히려 오해를 준다. 빈 상태로 간결히 안내한다.
+  const isEmpty = totalCollected === 0;
   const sampleNotice = report.sampleNotice ?? (
     totalIncluded < 50
       ? totalIncluded
@@ -900,13 +907,18 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
         </div>
       </header>
 
-      {sampleNotice && (
+      {isEmpty ? (
+        <p className="sample-notice empty-notice">
+          <span>아직 등록된 리뷰가 없는 상품이에요.<small>수집된 리뷰 0개</small></span>
+        </p>
+      ) : sampleNotice && (
         <p className="sample-notice">
           <AlertTriangle size={17} />
           <span>{sampleNotice}</span>
         </p>
       )}
 
+      {!isEmpty && (<>
       <section className="verdict-card">
         <div className="verdict-copy">
           <span className="section-label">
@@ -942,12 +954,26 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
         <InsightList title="사도 좋은 이유" items={report.strengths} tone="positive" />
         <InsightList title="구매 전 확인할 점" items={report.cautions} tone="caution" />
       </section>
+      </>)}
 
       <section className="ratings-section">
         <div className="section-heading">
-          <div><span className="section-label">별점별 최신 리뷰</span><h2>평점별 리뷰를 확인하세요.</h2></div>
-          <p>의심 리뷰를 제외한 최신 리뷰를 별점별 최대 100개까지 반영합니다.</p>
+          <div>
+            <span className="section-label">별점별 최신 리뷰</span>
+            <h2>{isEmpty ? "아직 별점별 리뷰가 없어요." : "평점별 리뷰를 확인하세요."}</h2>
+          </div>
+          {!isEmpty && <p>의심 리뷰를 제외한 최신 리뷰를 별점별 최대 100개까지 반영합니다.</p>}
         </div>
+        {isEmpty ? (
+          <div className="rating-list empty">
+            {report.ratings.map((item) => (
+              <div className="rating-empty-row" key={item.rating}>
+                <span className="rating-number">{item.rating}<Star size={16} fill="currentColor" /></span>
+                <strong>{item.rating}점 리뷰 0개</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="rating-list">
           {report.ratings.map((item) => {
             const visibleReviews = item.reviews.slice(0, 10);
@@ -988,8 +1014,10 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
             );
           })}
         </div>
+        )}
       </section>
 
+      {!isEmpty && (
       <section className={`anomaly-card${anomalyTotal ? "" : " empty"}`}>
         <div>
           <span className="section-label">제외된 리뷰 신호</span>
@@ -1005,8 +1033,9 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
           <span><strong>{report.anomalyCounts.uncertain}</strong>판단 유보</span>
         </div>
       </section>
+      )}
 
-      {report.limitations.map((limitation) => <p className="limitation" key={limitation}><AlertTriangle size={14} /> {limitation}</p>)}
+      {!isEmpty && report.limitations.map((limitation) => <p className="limitation" key={limitation}><AlertTriangle size={14} /> {limitation}</p>)}
     </div>
   );
 }
