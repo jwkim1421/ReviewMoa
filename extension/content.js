@@ -385,6 +385,21 @@ async function collectNaver(job, config, product) {
     message: "네이버 전체 리뷰 목록을 열고 있어요.",
   });
   if (!(await openFullNaverReviewList(config))) {
+    // 전체 목록을 열지 못한 이유가 "리뷰가 실제로 0개"라서일 수 있다. 이 경우
+    // 실패가 아니라 리뷰 없음으로 정상 처리한다.
+    if (readNaverReviewTotal() === 0 || isConfirmedEmptyReviewArea()) {
+      fullReviewDiagnostics.confirmedEmpty = true;
+      return {
+        jobId: job.id,
+        status: "completed",
+        reason: "confirmed_zero_reviews",
+        message: "정상적으로 확인한 결과 등록된 리뷰가 없습니다.",
+        product,
+        reviews: [],
+        collectorDiagnostics: fullReviewDiagnostics,
+        collectedAt: new Date().toISOString(),
+      };
+    }
     return {
       jobId: job.id,
       status: "failed",
@@ -1715,6 +1730,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   findRatingControl,
   hasOnlyNaverSummaryReviews,
   hideCollectionOverlay,
+  isConfirmedEmptyReviewArea,
   openFullNaverReviewList,
   prepareReviewArea,
   readNaverRatingDistribution,

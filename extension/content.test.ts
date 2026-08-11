@@ -29,6 +29,7 @@ type CollectorHooks = {
   cleanReviewContent(value: string): string;
   findFullNaverReviewControl(): Element | null;
   hasOnlyNaverSummaryReviews(config?: unknown): boolean;
+  isConfirmedEmptyReviewArea(): boolean;
   openFullNaverReviewList(config?: unknown, waitTimeout?: number): Promise<boolean>;
   prepareReviewArea(config?: unknown, job?: { id: string }, waitTimeout?: number): Promise<boolean>;
   readNaverRatingDistribution(): Record<number, number> | null;
@@ -125,6 +126,20 @@ describe("review collector", () => {
       .toEqual(["2026-08-09", "2026-08-07", "2026-08-01"]);
     expect(reviews.every((review) => !/더보기|이미지\s*펼치기/u.test(review.content)))
       .toBe(true);
+  });
+
+  it("recognizes an empty Naver review area as zero reviews, not a failure", () => {
+    const setInnerText = (value: string) =>
+      Object.defineProperty(document.body, "innerText", { value, configurable: true });
+    try {
+      setInnerText("구매평\n등록된 리뷰가 없습니다.");
+      expect(collector.isConfirmedEmptyReviewArea()).toBe(true);
+
+      setInnerText("리뷰 8\n좋아요 잘 쓰고 있습니다.");
+      expect(collector.isConfirmedEmptyReviewArea()).toBe(false);
+    } finally {
+      delete (document.body as unknown as { innerText?: unknown }).innerText;
+    }
   });
 
   it("classifies supported Naver product URL variants without tracking parameters", () => {
