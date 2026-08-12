@@ -1699,11 +1699,15 @@ function extractOption(node) {
 }
 
 function isConfirmedEmptyReviewArea() {
+  // 화면에 보이는 텍스트(innerText)와 리뷰 영역 컨테이너만 확인한다. body 전체
+  // textContent(숨김 요소 포함)를 넓게 스캔하면 "리뷰 이벤트… 재고 없어요" 같은 무관
+  // 문구에 오매칭되어 리뷰 있는 상품을 0건으로 오판할 수 있어 제외한다. 리뷰 낱말과
+  // "없음" 표현 사이 간격도 조사·공백 수준으로 좁혀 오매칭을 막는다.
   const root = findNaverReviewRoot();
   const text = normalize(
-    `${document.body?.innerText || ""} ${document.body?.textContent || ""} ${root && root !== document.body ? root.textContent || "" : ""}`,
+    `${document.body?.innerText || ""} ${root && root !== document.body ? root.textContent || "" : ""}`,
   );
-  return /(등록된|작성된|해당하는|아직)?\s*(리뷰|후기|상품평|구매평).{0,14}(없습니다|없어요|없어|0개|0건)/.test(text);
+  return /(?:등록된|작성된|해당하는|아직)?\s*(?:리뷰|후기|상품평|구매평)(?:가|이|는|은|를|을)?\s*(?:없습니다|없어요|없어|0\s*개|0\s*건)/.test(text);
 }
 
 // 상품 상단 탭/링크의 리뷰 수를 읽는다. "리뷰"만 있고 숫자가 없으면 0건, "리뷰 5"면

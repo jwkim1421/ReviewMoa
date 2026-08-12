@@ -386,15 +386,16 @@ async function reserveRateSlot(
 }
 
 // 공개 작업 생성에 IP 시간당 + 전체 일일 제한을 적용한다. 둘 중 하나라도 초과하면
-// false를 돌려주고 호출부에서 429로 응답한다.
+// false를 돌려주고 호출부에서 429로 응답한다. IP 한도를 먼저 검사해, 이미 한도를 넘은
+// IP의 거부되는 요청이 전역 일일 예산을 소모해 다른 사용자를 막는 것을 방지한다.
 async function withinJobRateLimit(request: Request, env: AppEnv) {
   const now = new Date().toISOString();
   const hourWindow = now.slice(0, 13);
   const dayWindow = now.slice(0, 10);
   const ipBucket = await clientIpBucket(request);
-  const globalOk = await reserveRateSlot(env, "jobs:global", dayWindow, RATE_LIMIT_GLOBAL_DAILY);
-  if (!globalOk) return false;
-  return reserveRateSlot(env, `jobs:${ipBucket}`, hourWindow, RATE_LIMIT_PER_IP_HOURLY);
+  const ipOk = await reserveRateSlot(env, `jobs:${ipBucket}`, hourWindow, RATE_LIMIT_PER_IP_HOURLY);
+  if (!ipOk) return false;
+  return reserveRateSlot(env, "jobs:global", dayWindow, RATE_LIMIT_GLOBAL_DAILY);
 }
 
 function validOptionalText(value: unknown, maxLength: number) {
@@ -1757,6 +1758,10 @@ async function handle(request: Request, env: AppEnv) {
       : {};
     if (body.collector !== undefined && body.collector !== "ios-safari") {
       return json({ error: "INVALID_COLLECTOR" }, 400, origin);
+    }
+    // refresh도 새 작업을 만들므로 /v1/jobs와 동일한 요청 제한을 적용한다.
+    if (!await withinJobRateLimit(request, env)) {
+      return json({ error: "RATE_LIMITED" }, 429, origin);
     }
     const mobileRequested = body.collector === "ios-safari";
     const id = crypto.randomUUID();

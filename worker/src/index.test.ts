@@ -463,6 +463,45 @@ describe("collector queue API", () => {
     expect(insert?.bindings[13]).toBe("ios-safari");
   });
 
+  it("rate-limits refresh the same as job creation", async () => {
+    const { db, statements } = createDb({
+      first(sql) {
+        if (sql.includes("SELECT * FROM jobs")) {
+          return {
+            id: "job-old",
+            cache_key: "naver:123:all",
+            product_json: JSON.stringify({ source: "naver", productId: "123" }),
+            status: "completed",
+            capability_json: null,
+            error_code: null,
+            progress_json: null,
+            interruption_reason: null,
+            requested_at: null,
+            started_at: null,
+            finished_at: null,
+            operator_token_hash: null,
+            operator_token_expires_at: null,
+            created_at: "2026-07-31T00:00:00.000Z",
+            updated_at: "2026-07-31T00:00:00.000Z",
+          };
+        }
+        if (sql.includes("INTO rate_events")) return null;
+      },
+    });
+    const response = await worker.fetch(
+      new Request("https://api.example/v1/jobs/job-old/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+      collectorEnv(db),
+    );
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({ error: "RATE_LIMITED" });
+    expect(statements.some((statement) => statement.sql.includes("INTO jobs"))).toBe(false);
+  });
+
   it("retries a timed-out refresh insert without creating a second job", async () => {
     const existingJob = {
       id: "job-old",

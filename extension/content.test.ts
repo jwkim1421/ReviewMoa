@@ -143,8 +143,14 @@ describe("review collector", () => {
         expect(collector.isConfirmedEmptyReviewArea()).toBe(true);
       }
 
-      setInnerText("리뷰 8\n좋아요 잘 쓰고 있습니다.");
-      expect(collector.isConfirmedEmptyReviewArea()).toBe(false);
+      for (const notEmpty of [
+        "리뷰 8\n좋아요 잘 쓰고 있습니다.",
+        "리뷰 이벤트 참여 시 재고 걱정 없어요",
+        "리뷰 1,234개 · 품절 없어요",
+      ]) {
+        setInnerText(notEmpty);
+        expect(collector.isConfirmedEmptyReviewArea()).toBe(false);
+      }
     } finally {
       delete (document.body as unknown as { innerText?: unknown }).innerText;
     }
