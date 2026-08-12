@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { JobSnapshot, JobStatus, ProductIdentity, Report } from "./domain/types";
-import { ProductUrlError, resolveProductInput } from "./domain/url";
+import { isNaverPlaceUrl, ProductUrlError, resolveProductInput } from "./domain/url";
 import { createJob, getAdminDiagnostics, getJob, refreshJob } from "./lib/api";
 import type { AdminDiagnosticJob, AdminDiagnostics } from "./lib/api";
 import {
@@ -67,6 +67,7 @@ export function App() {
   const [job, setJob] = useState<JobSnapshot>();
   const [report, setReport] = useState<Report>();
   const [error, setError] = useState("");
+  const [placeUnsupported, setPlaceUnsupported] = useState(false);
   const [handoffStarting, setHandoffStarting] = useState(false);
   const [handoffError, setHandoffError] = useState("");
 
@@ -192,6 +193,12 @@ export function App() {
   async function startCollection(inputUrl: string) {
     setError("");
     setHandoffError("");
+    setPlaceUnsupported(false);
+    if (isNaverPlaceUrl(inputUrl)) {
+      setPlaceUnsupported(true);
+      setView("home");
+      return;
+    }
     try {
       const resolved = resolveProductInput(inputUrl);
       setProduct(resolved);
@@ -326,7 +333,7 @@ export function App() {
   return (
     <main className={`view-${view}`}>
       <Nav onHome={reset} onIdeas={showIdeas} ideasActive={view === "ideas"} />
-      {view === "home" && <Home url={url} setUrl={setUrl} onSubmit={submit} error={error} />}
+      {view === "home" && <Home url={url} setUrl={setUrl} onSubmit={submit} error={error} placeUnsupported={placeUnsupported} onIdeas={showIdeas} />}
       {view === "probing" && (
         <Probe
           product={product}
@@ -375,11 +382,15 @@ function Home({
   setUrl,
   onSubmit,
   error,
+  placeUnsupported,
+  onIdeas,
 }: {
   url: string;
   setUrl: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   error: string;
+  placeUnsupported: boolean;
+  onIdeas: () => void;
 }) {
   return (
     <>
@@ -407,7 +418,14 @@ function Home({
           )}
           <button type="submit">리뷰 확인 <ArrowRight size={18} /></button>
         </form>
-        {error ? <p className="form-error"><AlertTriangle size={14} /> {error}</p> : (
+        {placeUnsupported ? (
+          <p className="search-note place-unsupported">
+            <span>
+              네이버 장소 리뷰 수집은 현재 제공하지 않습니다.<br />
+              <button type="button" className="ideas-inline" onClick={onIdeas}>‘아이디어 기여’</button>에 의견을 남겨주시겠어요?
+            </span>
+          </p>
+        ) : error ? <p className="form-error"><AlertTriangle size={14} /> {error}</p> : (
           <p className="search-note">
             <ShieldCheck size={14} />
             <span>중앙 수집 서버가 작업을 처리하며<br />사용자의 개인정보는 수집하지 않습니다.</span>

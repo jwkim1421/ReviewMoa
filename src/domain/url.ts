@@ -123,6 +123,17 @@ export function resolveProductInput(input: string): ProductIdentity {
   };
 }
 
+// 네이버 플레이스(장소) 주소인지 판별한다. 장소 리뷰는 상품과 구조가 전혀 달라 아직
+// 지원하지 않으므로, 서버로 보내 UNSUPPORTED_SOURCE로 막기 전에 안내로 대체한다.
+export function isNaverPlaceUrl(input: string): boolean {
+  try {
+    const url = new URL(extractUrl(input));
+    return /(^|\.)place\.naver\.com$/.test(normalizeHost(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
 export function cacheKey(product: ProductIdentity, optionId = "all"): string {
   return `${product.source}:${product.productId}:${optionId}`.toLowerCase();
 }
