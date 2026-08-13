@@ -173,6 +173,12 @@ describe("review collector", () => {
       </nav>`;
     expect(collector.readNaverReviewTabCount()).toBe(12);
 
+    // 접미사가 붙은 다수 리뷰를 0으로 오판하지 않는다.
+    document.body.innerHTML = `<nav><a role="tab">리뷰 999+</a></nav>`;
+    expect(collector.readNaverReviewTabCount()).toBe(999);
+    document.body.innerHTML = `<nav><a role="tab">리뷰 1,234개</a></nav>`;
+    expect(collector.readNaverReviewTabCount()).toBe(1234);
+
     document.body.innerHTML = `<nav><a role="tab">상세정보</a></nav>`;
     expect(collector.readNaverReviewTabCount()).toBeNull();
   });

@@ -540,6 +540,11 @@ async function hydrateStoredReport(
     created_at: string | null;
     option_name: string | null;
   }>();
+  // 보존 정책상 원문은 reviews 테이블에만 두므로, 응답 시 대표 리뷰 원문을 여기서
+  // 채운다. 대표 리뷰 id(별점당 최대 10개, 총 ≤50개)만 조회하고 reviews의 기본키
+  // (job_id, review_id) 인덱스를 그대로 타므로 비용은 작다. 빈 보고서(ids 없음)와
+  // 원문 만료(위에서 조기 반환)는 이 쿼리를 아예 실행하지 않는다. 이 조회를 없애려고
+  // report_json에 원문을 다시 넣으면 30일 보존 버그가 재발하므로 유지한다.
   if (ids.length) {
     const placeholders = ids.map(() => "?").join(",");
     const rows = (await env.DB.prepare(

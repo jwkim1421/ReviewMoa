@@ -18,6 +18,10 @@ const MAX_INCLUDED_PER_RATING = 100;
 const MAX_SCANNED_PER_RATING = 300;
 const MAX_SCANNED_WITHOUT_FILTER = 3000;
 const MAX_FULL_SCAN_WITHOUT_SORT = 1000;
+// 최신순 정렬 메뉴 검증 실패 시 전체 스캔 폴백을 허용하는 상한. 모바일에서 수천 개를
+// 끝까지 스캔하면 매우 느리고 결국 검증에 실패하기 쉬워, 전체 스캔 하드 캡(3000)보다
+// 낮게 잡아 오래 기다린 끝에 실패하는 상황을 줄인다(실기기 테스트로 조정 가능).
+const MAX_NEWEST_SORT_FALLBACK_SCAN = 2000;
 const MAX_PAGE_ATTEMPTS = 80;
 const COLLECTION_OVERLAY_ID = "reviewmoa-collection-overlay";
 const NAVER_REVIEW_BODY_SELECTOR = "[data-shp-area='sprvarevlist_l.review']";
@@ -381,9 +385,10 @@ async function collectNaver(job, config, product) {
   }
 
   // 리뷰가 실제로 0개인 상품은 전체 목록·본문이 없어 뒤 단계에서 실패로 오인된다.
-  // 리뷰 탭 숫자 등으로 0건이 확인되면 전체 목록 열기를 시도하기 전에 리뷰 없음으로
-  // 정상 종료한다.
-  if (await confirmNaverZeroReviews()) {
+  // 여기서는 부작용 없는 탭 숫자만 확인해 0건이면 전체 목록 열기 전에 정상 종료한다.
+  // 탭 숫자를 못 읽는 경우의 지연 렌더 유도(탭 클릭·스크롤)는 openFull 실패 후에만
+  // 한 번 수행해, 리뷰 있는 상품의 매 수집마다 페이지 상태를 건드리지 않도록 한다.
+  if (readNaverReviewTabCount() === 0) {
     fullReviewDiagnostics.confirmedEmpty = true;
     return {
       jobId: job.id,
@@ -478,7 +483,7 @@ async function collectNaver(job, config, product) {
       // 최신순 정렬 메뉴를 검증하지 못해도, 리뷰 수가 전체 스캔 한도 이내이면 전체를
       // 훑어 작성일로 정렬하는 방식으로 폴백한다(정렬 메뉴 없이도 최신 리뷰 확보).
       // 한도를 넘어 전체 스캔도 불가능할 때만 잘못된 분석을 막기 위해 중단한다.
-      if (sourceReviewCount <= MAX_SCANNED_WITHOUT_FILTER) {
+      if (sourceReviewCount <= MAX_NEWEST_SORT_FALLBACK_SCAN) {
         fullScanFallback = true;
         fullReviewDiagnostics.sortFallbackReason = "newest_sort_not_verified";
       } else {
@@ -1717,7 +1722,9 @@ function isConfirmedEmptyReviewArea() {
 function readNaverReviewTabCount() {
   let sawTab = false;
   let maxCount = 0;
-  const pattern = /^(?:리뷰|후기|상품평|구매평)\s*\(?([\d,]+)?\)?$/;
+  // 숫자 뒤 "+"(예: "리뷰 999+")나 "개/건" 접미사를 허용한다. 이를 무시하면 접미사가
+  // 붙은 다수 리뷰가 파싱 실패해 0으로 오판(false zero)될 수 있다.
+  const pattern = /^(?:리뷰|후기|상품평|구매평)\s*\(?\s*([\d,]+)?\s*\+?\s*\)?\s*(?:개|건)?$/;
   for (const el of document.querySelectorAll("a, button, [role='tab'], [role='button']")) {
     if (!isRenderedInActiveTree(el)) continue;
     for (const raw of [el.textContent, el.getAttribute("aria-label")]) {
