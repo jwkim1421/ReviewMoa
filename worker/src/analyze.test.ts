@@ -150,3 +150,23 @@ describe("AI fallback", () => {
     }
   });
 });
+
+describe("confidence explanations (P1-1)", () => {
+  it("records a confidence version and per-component explanations", () => {
+    const rows: StoredReview[] = [
+      { review_id: "a", rating: 5, content: "잘 쓰고 있어요 만족합니다", classification: "included", created_at: "2020-01-01T00:00:00.000Z" },
+      { review_id: "b", rating: 1, content: "배송이 느려서 별로였어요", classification: "included", created_at: "2020-01-02T00:00:00.000Z" },
+    ];
+    const report = createReport("job-1", { source: "naver", productId: "1", name: "x" }, rows) as unknown as {
+      confidenceVersion: string;
+      confidenceExplanations: Record<string, string>;
+    };
+
+    expect(report.confidenceVersion).toBe("2026-08");
+    expect(Object.keys(report.confidenceExplanations).sort()).toEqual(
+      ["completeness", "consistency", "evidence", "freshness", "health"],
+    );
+    expect(report.confidenceExplanations.health).toContain("제외 신호가 없어요");
+    expect(report.confidenceExplanations.freshness).toContain("1년 이상");
+  });
+});

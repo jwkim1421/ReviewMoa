@@ -1,5 +1,7 @@
 import type { StoredReview } from "./types";
 
+const CONFIDENCE_VERSION = "2026-08";
+
 const POSITIVE_ASPECTS: Array<[string, RegExp]> = [
   ["아이의 관심과 만족", /(?:아기|아이).{0,35}(?:좋아|잘\s*(?:보|놀)|관심|빠져|즐거)|(?:좋아|잘\s*(?:보|놀)).{0,12}(?:아기|아이)/],
   ["콘텐츠와 구성", /(?:구성|스토리|작품|설명\s*모드|음악\s*모드).{0,15}(?:좋|다양|알차|만족|잘)|(?:좋|다양|알차).{0,10}(?:구성|스토리|작품)/],
@@ -64,6 +66,30 @@ function confidence(
       }, 0) / reviews.length
     : 0;
   const health = reviews.length ? 1 - Math.min(excluded / (reviews.length + excluded), 1) : 0;
+  const fullyCollected = counts.filter((value) => value >= 0.999).length;
+  const explanations = {
+    completeness: fullyCollected >= 5
+      ? "모든 별점을 원본 수준으로 수집했어요."
+      : `일부 별점(${5 - fullyCollected}개)이 원본 대비 덜 수집됐어요.`,
+    evidence: reviews.length >= 100
+      ? `분석 리뷰 ${reviews.length}개로 근거가 충분해요.`
+      : `분석 리뷰가 ${reviews.length}개로 다소 적어요.`,
+    consistency: consistency >= 0.6
+      ? "같은 의견이 뚜렷하게 반복돼요."
+      : consistency > 0
+        ? "반복되는 의견이 다소 있어요."
+        : "반복되는 의견이 뚜렷하지 않아요.",
+    freshness: reviews.length === 0
+      ? "작성일을 확인할 수 있는 리뷰가 없어요."
+      : freshness >= 0.7
+        ? "최근에 작성된 리뷰가 많아요."
+        : freshness >= 0.4
+          ? "최근·오래된 리뷰가 섞여 있어요."
+          : "리뷰 대부분이 1년 이상 전에 작성됐어요.",
+    health: excluded === 0
+      ? "제외 신호가 없어요 (0개가 진위를 보증한다는 뜻은 아니에요)."
+      : `의심 신호 ${excluded}개를 분석에서 제외했어요.`,
+  };
   const breakdown = {
     completeness: Math.round(completeness * 35),
     evidence: Math.round(evidence * 25),
@@ -74,6 +100,7 @@ function confidence(
   return {
     score: Math.min(Object.values(breakdown).reduce((sum, value) => sum + value, 0), 100),
     breakdown,
+    explanations,
   };
 }
 
@@ -143,6 +170,8 @@ export function createReport(
     analysisProvider: "rules",
     confidence: confidenceResult.score,
     confidenceBreakdown: confidenceResult.breakdown,
+    confidenceVersion: CONFIDENCE_VERSION,
+    confidenceExplanations: confidenceResult.explanations,
     confidenceReasons: [
       sourceReviewCount
         ? `원본 리뷰 ${sourceReviewCount}개 확인 · 별점별 분석 ${included.length}개 반영`
