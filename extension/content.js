@@ -933,19 +933,7 @@ function readVisibleNaverReviews(options) {
     if (options.seenKeys.has(key)) continue;
     options.seenKeys.add(key);
 
-    const bodyFingerprint = fingerprint(content);
-    let classification = "included";
-    const lower = content.toLowerCase();
-    if (SPONSORED_WORDS.some((word) => lower.includes(word.toLowerCase()))) {
-      classification = "sponsored";
-    } else if (options.duplicateBodies.has(bodyFingerprint)) {
-      classification = "duplicate";
-    } else if (rating >= 4 && NEGATIVE_WORDS.filter((word) => lower.includes(word)).length >= 2) {
-      classification = "rating_mismatch";
-    } else if (rating <= 2 && POSITIVE_WORDS.filter((word) => lower.includes(word)).length >= 2) {
-      classification = "rating_mismatch";
-    }
-    options.duplicateBodies.add(bodyFingerprint);
+    const classification = classifyReview(content, rating, options.duplicateBodies);
     results.push({
       id: sourceId || `${location.href}#naver-review-${hashText(`${content}:${index}`)}`,
       rating,
@@ -1211,19 +1199,7 @@ function readVisibleReviews(config, options) {
     if (options.seenKeys.has(key)) continue;
     options.seenKeys.add(key);
 
-    const bodyFingerprint = fingerprint(content);
-    let classification = "included";
-    const lower = content.toLowerCase();
-    if (SPONSORED_WORDS.some((word) => lower.includes(word.toLowerCase()))) {
-      classification = "sponsored";
-    } else if (options.duplicateBodies.has(bodyFingerprint)) {
-      classification = "duplicate";
-    } else if (rating >= 4 && NEGATIVE_WORDS.filter((word) => lower.includes(word)).length >= 2) {
-      classification = "rating_mismatch";
-    } else if (rating <= 2 && POSITIVE_WORDS.filter((word) => lower.includes(word)).length >= 2) {
-      classification = "rating_mismatch";
-    }
-    options.duplicateBodies.add(bodyFingerprint);
+    const classification = classifyReview(content, rating, options.duplicateBodies);
     results.push({
       id: sourceId || `${location.href}#review-${hashText(`${content}:${index}`)}`,
       rating,
@@ -1781,8 +1757,38 @@ function hashText(value) {
   return (hash >>> 0).toString(36);
 }
 
-function fingerprint(value) {
-  return value.toLowerCase().replace(/[^0-9a-z가-힣]/g, "").slice(0, 1200);
+// 문장부호·공백 차이를 무시한 "근접 중복 키". 앞부분 40자 + 정렬된 대표 토큰으로
+// 살짝 다른 복붙 리뷰까지 같은 키로 묶는다. 모바일 성능 위해 O(n) 버킷팅만 쓴다.
+function nearDuplicateKey(content) {
+  const cleaned = content.toLowerCase().replace(/[^0-9a-z가-힣\s]/g, " ").replace(/\s+/g, " ").trim();
+  const head = cleaned.replace(/\s/g, "").slice(0, 40);
+  const tokens = [...new Set(cleaned.split(" ").filter((token) => token.length >= 2))].sort().slice(0, 8).join("|");
+  return `${head}#${tokens}`;
+}
+
+// 부정 표현("좋지 않다/만족하지 못했다" 등)으로 뒤집힌 단어는 세지 않는다.
+function countUnnegated(content, words) {
+  const lower = content.toLowerCase();
+  return words.filter((word) => {
+    const idx = lower.indexOf(word.toLowerCase());
+    if (idx === -1) return false;
+    const after = content.slice(idx, idx + word.length + 6);
+    return !/(지\s*(않|못)|진\s*않|지도\s*않)/.test(after);
+  }).length;
+}
+
+// 광고성 > 근접중복 > 평점불일치 > 포함 순으로 판정한다. 근접 키는 분류와 무관하게
+// 항상 등록해 이후 동일 리뷰를 중복으로 잡는다. 불일치는 부정 표현을 반영해 보수적으로.
+function classifyReview(content, rating, nearKeys) {
+  const lower = content.toLowerCase();
+  const key = nearDuplicateKey(content);
+  const isDuplicate = nearKeys.has(key);
+  nearKeys.add(key);
+  if (SPONSORED_WORDS.some((word) => lower.includes(word.toLowerCase()))) return "sponsored";
+  if (isDuplicate) return "duplicate";
+  if (rating >= 4 && countUnnegated(content, NEGATIVE_WORDS) >= 2) return "rating_mismatch";
+  if (rating <= 2 && countUnnegated(content, POSITIVE_WORDS) >= 2) return "rating_mismatch";
+  return "included";
 }
 
 function normalize(value) {
@@ -1803,6 +1809,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   applyNaverNewestSort,
   chooseNaverCollectionStrategy,
   collectNaverPages,
+  classifyReview,
   cleanReviewContent,
   extractContent,
   extractRating,
@@ -1814,6 +1821,7 @@ globalThis.REVIEWMOA_COLLECTOR_TEST = Object.freeze({
   hideCollectionOverlay,
   isConfirmedEmptyReviewArea,
   openFullNaverReviewList,
+  nearDuplicateKey,
   readNaverReviewTabCount,
   prepareReviewArea,
   readNaverRatingDistribution,

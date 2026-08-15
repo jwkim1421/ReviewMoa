@@ -27,6 +27,8 @@ type CollectorHooks = {
     message: string;
   } | null;
   cleanReviewContent(value: string): string;
+  classifyReview(content: string, rating: number, nearKeys: Set<string>): string;
+  nearDuplicateKey(content: string): string;
   findFullNaverReviewControl(): Element | null;
   hasOnlyNaverSummaryReviews(config?: unknown): boolean;
   isConfirmedEmptyReviewArea(): boolean;
@@ -181,6 +183,17 @@ describe("review collector", () => {
 
     document.body.innerHTML = `<nav><a role="tab">상세정보</a></nav>`;
     expect(collector.readNaverReviewTabCount()).toBeNull();
+  });
+
+  it("classifies near-duplicates and respects Korean negation (P1-1)", () => {
+    const keys = new Set<string>();
+    expect(collector.classifyReview("정말 좋아요, 잘 쓰고 있어요!", 5, keys)).toBe("included");
+    // 문장부호만 다른 근접 중복 → duplicate
+    expect(collector.classifyReview("정말 좋아요 잘 쓰고 있어요..", 5, keys)).toBe("duplicate");
+    // 낮은 별점 + '부정된 긍정어'는 불일치로 보지 않는다(보수적)
+    expect(collector.classifyReview("만족하지 않아요. 추천하지 않아요.", 1, new Set())).toBe("included");
+    // 진짜 긍정인데 낮은 별점이면 불일치 신호
+    expect(collector.classifyReview("만족스럽고 추천해요.", 1, new Set())).toBe("rating_mismatch");
   });
 
   it("classifies supported Naver product URL variants without tracking parameters", () => {
