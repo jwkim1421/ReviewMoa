@@ -877,6 +877,14 @@ function Probe({
   );
 }
 
+const CONFIDENCE_COMPONENTS = [
+  { key: "completeness", label: "별점별 수집 완성도", max: 35 },
+  { key: "evidence", label: "분석 리뷰의 충분성", max: 25 },
+  { key: "consistency", label: "반복 의견의 강도", max: 20 },
+  { key: "freshness", label: "리뷰 최신성", max: 10 },
+  { key: "health", label: "의심 신호를 제외한 데이터 건전성", max: 10 },
+] as const;
+
 function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: () => void; onBack: () => void }) {
   const [openRating, setOpenRating] = useState<number | null>(null);
   const confidenceLabel = report.confidence >= 80 ? "높음" : report.confidence >= 60 ? "보통" : "낮음";
@@ -953,17 +961,29 @@ function ReportView({ report, onRefresh, onBack }: { report: Report; onRefresh: 
           <div className="confidence-ring" style={{ "--score": `${report.confidence * 3.6}deg` } as React.CSSProperties}>
             <span><strong>{report.confidence}</strong><small>/100</small></span>
           </div>
-          <div><span>신뢰도 {confidenceLabel}</span><small>{report.confidenceReasons[0]}</small></div>
+          <div className="confidence-copy">
+            <span>데이터 신뢰도 · {confidenceLabel} <em className="confidence-tag">데이터 충분성</em></span>
+            <small>{report.confidenceReasons[0]}</small>
+            <p className="confidence-note">상품이 좋고 나쁨이 아니라, 이 결론을 뒷받침할 리뷰 데이터가 얼마나 충분하고 일관적인지를 나타냅니다.</p>
+          </div>
         </div>
       </section>
       <details className="confidence-explain">
-        <summary>신뢰도 점수는 어떻게 계산하나요?</summary>
-        <div>
-          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.completeness}/35` : "35%"}</strong> 별점별 수집 완성도</span>
-          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.evidence}/25` : "25%"}</strong> 분석 리뷰의 충분성</span>
-          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.consistency}/20` : "20%"}</strong> 반복 의견의 강도</span>
-          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.freshness}/10` : "10%"}</strong> 리뷰 최신성</span>
-          <span><strong>{report.confidenceBreakdown ? `${report.confidenceBreakdown.health}/10` : "10%"}</strong> 의심 신호를 제외한 데이터 건전성</span>
+        <summary>
+          신뢰도 점수는 어떻게 계산하나요?
+          {report.confidenceVersion && <span className="confidence-ver">산식 v{report.confidenceVersion}</span>}
+        </summary>
+        <div className="confidence-rows">
+          {CONFIDENCE_COMPONENTS.map(({ key, label, max }) => (
+            <div className="confidence-row" key={key}>
+              <span className="confidence-score">
+                {report.confidenceBreakdown ? report.confidenceBreakdown[key] : "–"}<small>/{max}</small>
+              </span>
+              <span className="confidence-why">
+                <strong>{label}</strong>{report.confidenceExplanations ? ` — ${report.confidenceExplanations[key]}` : ""}
+              </span>
+            </div>
+          ))}
         </div>
         <p>구매 성공 확률이 아니라, 이번 결론을 뒷받침하는 리뷰 데이터가 얼마나 충분하고 일관적인지를 나타냅니다.</p>
       </details>

@@ -283,9 +283,16 @@ h1 em { color: var(--orange); font-style: normal; }
 .confidence > div:last-child small { max-width: 100px; margin-top: 5px; color: rgba(255,255,255,.55); line-height: 1.4; }
 .confidence-explain { margin: 12px 0 0; padding: 14px 18px; border: 1px solid #ddd6c9; border-radius: 12px; background: rgba(255,255,255,.4); color: #6f685f; font-size: 12px; }
 .confidence-explain summary { cursor: pointer; color: var(--green); font-weight: 700; }
-.confidence-explain > div { margin-top: 14px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.confidence-explain span { padding: 10px; border-radius: 8px; background: white; }
-.confidence-explain strong { display: block; margin-bottom: 4px; color: var(--ink); }
+.confidence-copy { display: grid; gap: 4px; }
+.confidence-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.16); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: .05em; font-style: normal; vertical-align: 2px; }
+.confidence-note { margin: 4px 0 0; max-width: none; color: rgba(255,255,255,.72); font-size: 12px; line-height: 1.55; }
+.confidence-ver { margin-left: 8px; color: #9a9488; font-size: 11px; font-weight: 700; }
+.confidence-rows { margin-top: 14px; display: grid; grid-template-columns: 1fr; gap: 10px; }
+.confidence-row { display: grid; grid-template-columns: max-content 1fr; column-gap: 32px; align-items: baseline; }
+.confidence-score { font-size: 13px; font-weight: 800; color: var(--green); white-space: nowrap; }
+.confidence-score small { color: #a7a196; font-weight: 700; }
+.confidence-why { color: #6c675e; font-size: 13px; line-height: 1.5; }
+.confidence-why strong { color: var(--ink); }
 .confidence-explain p { margin: 12px 0 0; line-height: 1.6; }
 
 .insight-grid { margin: 28px 0 70px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
@@ -402,7 +409,7 @@ h1 em { color: var(--orange); font-style: normal; }
   .report-header h1 { font-size: 18px; line-height: 1.4; }
   .verdict-card { grid-template-columns: 1fr; padding: 28px; }
   .confidence { border-left: 0; border-top: 1px solid rgba(255,255,255,.18); padding: 22px 0 0; }
-  .confidence-explain > div { grid-template-columns: 1fr 1fr; }
+  .confidence-rows { grid-template-columns: 1fr; }
   .insight-grid { margin: 22px 0 52px; grid-template-columns: 1fr; gap: 14px; }
   .insight-card { padding: 18px; }
   .insight-row { padding-top: 12px; }

@@ -118,6 +118,14 @@ export interface Report {
     freshness: number;
     health: number;
   };
+  confidenceVersion?: string;
+  confidenceExplanations?: {
+    completeness: string;
+    evidence: string;
+    consistency: string;
+    freshness: string;
+    health: string;
+  };
   confidenceReasons: string[];
   sampleNotice?: string;
   strengths: Array<{ label: string; mentions: number; ratio: number }>;
